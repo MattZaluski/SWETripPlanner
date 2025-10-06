@@ -1,27 +1,44 @@
-document.getElementById("planForm").addEventListener("submit", async function (e) {
-  e.preventDefault();
-  const locText = document.getElementById("loc").value;
-  const latlng = locText.split(",").map(s => parseFloat(s.trim()));
-  const interests = document.getElementById("interests").value.split(",").map(s => s.trim());
-  const body = { location: { lat: latlng[0], lng: latlng[1] }, interests: interests, budget: "low" };
+document.addEventListener('DOMContentLoaded', () => {
+    const form = document.getElementById('trip-form');
+    const itineraryList = document.getElementById('itinerary-list');
+    const weatherInfo = document.getElementById('weather-info');
 
-  try {
-    const res = await fetch("/api/plan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(form);
+        const data = {
+            starting_address: formData.get('starting-address'),
+            interests: formData.get('interests').split(',').map(i => i.trim()).filter(i => i),
+            budget: formData.get('budget'),
+            max_distance: parseFloat(formData.get('max-distance')) || 30,
+            travel_mode: formData.get('travel-mode')
+        };
+
+        try {
+            const response = await fetch('/api/plan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            const result = await response.json();
+            if (result.error) {
+                alert(result.error);
+                return;
+            }
+
+            // Display mock weather (for completeness)
+            const weather = result.weather;
+            weatherInfo.textContent = `Weather (Mock): ${weather.summary}, Temp: ${weather.temp_f}°F, Precip: ${weather.precip}mm`;
+
+            // Display LLM-generated itinerary
+            itineraryList.innerHTML = '';
+            result.itinerary.forEach(item => {
+                const div = document.createElement('div');
+                div.innerHTML = `<strong>${item.time}</strong>: ${item.name} (${item.cost}) - ${item.reason} (Travel: ${item.travel_time_min} min)`;
+                itineraryList.appendChild(div);
+            });
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
     });
-    const data = await res.json();
-    const results = document.getElementById("results");
-    if (data.error) { results.innerText = "Error: " + data.error; return; }
-    results.innerHTML = "";
-    data.itinerary.forEach(stop => {
-      const el = document.createElement("div");
-      el.className = "card my-2 p-2";
-      el.innerHTML = `<strong>${stop.order}. ${stop.name}</strong><div>${stop.time} • ${stop.cost}</div><p>${stop.reason}</p>`;
-      results.appendChild(el);
-    });
-  } catch (err) {
-    document.getElementById("results").innerText = "Network error: " + err.toString();
-  }
 });

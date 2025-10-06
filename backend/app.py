@@ -14,11 +14,11 @@ def index():
 @app.route("/api/plan", methods=["POST"])
 def api_plan():
     data = request.get_json()
-    if not data or "location" not in data:
-        return jsonify({"error":"missing location"}), 400
+    if not data or "starting_address" not in data:
+        return jsonify({"error": "missing starting_address"}), 400
     try:
-        itinerary = plan_trip(data)
-        return jsonify({"itinerary": itinerary})
+        result = plan_trip(data)
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

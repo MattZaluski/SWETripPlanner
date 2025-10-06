@@ -1,0 +1,5 @@
+Flask==2.3.2
+python-dotenv==1.0.0
+requests==2.31.0
+openai==1.35.3  # Latest stable version as of Oct 2025; supports gpt-4o-mini
+gunicorn==20.1.0  # For production if needed, but optional for local
