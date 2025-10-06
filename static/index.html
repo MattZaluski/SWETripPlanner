@@ -3,52 +3,56 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SWE Trip Planner</title>
-    <!-- Link to CSS -->
+    <title>Trip Planner API and LLM Integration Test</title>
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
     <header>
-        <h1>SWE Trip Planner</h1>
+        <h1>Trip Planner API & LLM Integration Test</h1>
     </header>
 
     <main>
-        <section id="user-input">
-            <h2>Plan Your Day Trip</h2>
+        <section id="user-input" class="card">
+            <h2>Enter Your Preferences</h2>
             <form id="trip-form">
-                <label for="interests">Interests:</label>
-                <input type="text" id="interests" name="interests" placeholder="e.g., museums, hiking">
+                <label for="starting-address">Starting Address:</label>
+                <input type="text" id="starting-address" name="starting-address" placeholder="e.g., Boston, MA" required>
 
-                <label for="budget">Budget ($):</label>
-                <input type="number" id="budget" name="budget" placeholder="e.g., 50">
+                <label for="interests">Interests (comma-separated):</label>
+                <input type="text" id="interests" name="interests" placeholder="e.g., food, parks">
+
+                <label for="budget">Budget Level:</label>
+                <select id="budget" name="budget">
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                </select>
 
                 <label for="max-distance">Max Distance (miles):</label>
                 <input type="number" id="max-distance" name="max-distance" placeholder="e.g., 30">
 
                 <label for="travel-mode">Travel Mode:</label>
                 <select id="travel-mode" name="travel-mode">
-                    <option value="car">Car</option>
-                    <option value="bike">Bike</option>
-                    <option value="walk">Walk</option>
+                    <option value="driving-car">Car</option>
+                    <option value="cycling-regular">Bike</option>
+                    <option value="foot-walking">Walk</option>
                 </select>
 
                 <button type="submit">Generate Itinerary</button>
             </form>
         </section>
 
-        <section id="itinerary">
-            <h2>Your Itinerary</h2>
-            <div id="itinerary-list">
-                <!-- Generated itinerary cards will appear here -->
-            </div>
+        <section id="itinerary" class="card">
+            <h2>Your Generated Itinerary</h2>
+            <p id="weather-info"></p>
+            <div id="itinerary-list"></div>
         </section>
     </main>
 
     <footer>
-        <p>&copy; 2025 SWE Trip Planner</p>
+        <p>&copy; 2025 LLM Trip Planner</p>
     </footer>
 
-    <!-- Link to JS -->
     <script src="/static/app.js"></script>
 </body>
 </html>
