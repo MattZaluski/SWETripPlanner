@@ -5,7 +5,7 @@ Quick one-page setup (exact commands)
 git clone https://github.com/<ORG>/trip-planner.git
 cd trip-planner
 
-2) Create a branch (optional but recommended)
+2) Create a branch (optional but recommended) 5
 git checkout -b feature/setup
 
 3) Create virtual environment
