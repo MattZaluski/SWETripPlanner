@@ -1,9 +1,72 @@
 import os
 import json
 import requests
+import time
+import hashlib
 from dotenv import load_dotenv
 from openai import OpenAI
 import google.generativeai as genai
+
+load_dotenv()
+
+# ============== Simple Cache Implementation ==============
+
+class SimpleCache:
+    """
+    Simple time-based cache with automatic expiration.
+    Each cache entry has a TTL (time to live) in seconds.
+    """
+    def __init__(self):
+        self._cache = {}
+    
+    def _generate_key(self, *args, **kwargs):
+        """Generate a cache key from arguments."""
+        key_data = json.dumps({"args": args, "kwargs": kwargs}, sort_keys=True)
+        return hashlib.md5(key_data.encode()).hexdigest()
+    
+    def get(self, key):
+        """Get value from cache if not expired."""
+        if key in self._cache:
+            value, expiry_time = self._cache[key]
+            if time.time() < expiry_time:
+                return value
+            else:
+                # Remove expired entry
+                del self._cache[key]
+        return None
+    
+    def set(self, key, value, ttl_seconds):
+        """Set value in cache with TTL (time to live) in seconds."""
+        expiry_time = time.time() + ttl_seconds
+        self._cache[key] = (value, expiry_time)
+    
+    def clear(self):
+        """Clear all cache entries."""
+        self._cache.clear()
+    
+    def get_stats(self):
+        """Get cache statistics."""
+        total = len(self._cache)
+        expired = sum(1 for _, (_, exp) in self._cache.items() if time.time() >= exp)
+        return {
+            "total_entries": total,
+            "active_entries": total - expired,
+            "expired_entries": expired
+        }
+
+# Initialize caches with different TTLs for different data types
+geocoding_cache = SimpleCache()      # 24 hours - addresses don't change
+weather_cache = SimpleCache()        # 30 minutes - weather updates frequently
+places_cache = SimpleCache()         # 2 hours - places don't change often
+llm_scoring_cache = SimpleCache()    # 1 hour - scores can be reused
+routing_cache = SimpleCache()        # 6 hours - routes are fairly static
+
+# Cache TTL constants (in seconds)
+GEOCODING_TTL = 24 * 60 * 60  # 24 hours
+WEATHER_TTL = 30 * 60          # 30 minutes
+PLACES_TTL = 2 * 60 * 60       # 2 hours
+LLM_SCORING_TTL = 60 * 60      # 1 hour
+ROUTING_TTL = 6 * 60 * 60      # 6 hours
 
 load_dotenv()
 
@@ -17,20 +80,124 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 # --- Keep your old mocks for quick fallback/testing ---
 MOCK_PLACES = [
-    {"id": "p1", "name": "Museum of Stuff", "lat": 42.36, "lng": -71.06, "type": "museum", "cost": "low", "hours": "10-17"},
-    {"id": "p2", "name": "Sunny Park", "lat": 42.37, "lng": -71.05, "type": "park", "cost": "free", "hours": "6-20"},
-    {"id": "p3", "name": "Joe's Diner", "lat": 42.355, "lng": -71.07, "type": "restaurant", "cost": "low", "hours": "7-21"},
+    {"id": "p1", "name": "Museum of Stuff", "lat": 42.36, "lng": -71.06, "type": "museum", "cost": "low", "hours": "10-17", "address": "123 Main St, Boston, MA 02101", "street": "123 Main St", "city": "Boston", "state": "MA", "country": "USA"},
+    {"id": "p2", "name": "Sunny Park", "lat": 42.37, "lng": -71.05, "type": "park", "cost": "free", "hours": "6-20", "address": "456 Park Ave, Boston, MA 02102", "street": "456 Park Ave", "city": "Boston", "state": "MA", "country": "USA"},
+    {"id": "p3", "name": "Joe's Diner", "lat": 42.355, "lng": -71.07, "type": "restaurant", "cost": "low", "hours": "7-21", "address": "789 Food St, Boston, MA 02103", "street": "789 Food St", "city": "Boston", "state": "MA", "country": "USA"},
 ]
 
 MOCK_WEATHER = {"summary": "clear", "temp_f": 65, "precip": 0}
 MOCK_TRAVEL_TIMES = {"p1": 10, "p2": 15, "p3": 20}
+
+# ---------------- Weather helpers ----------------
+
+def fetch_weather_from_openmeteo(lat, lng):
+    """
+    Fetch current and hourly weather data from Open-Meteo API.
+    Results are cached for 30 minutes (weather changes frequently).
+    """
+    # Check cache first - round coordinates to 2 decimals for cache key
+    cache_key = f"weather_{round(lat, 2)}_{round(lng, 2)}"
+    cached_result = weather_cache.get(cache_key)
+    if cached_result:
+        print(f"✓ Cache hit: Weather for ({lat}, {lng})")
+        return cached_result
+    
+    print(f"⚡ Cache miss: Fetching weather for ({lat}, {lng})")
+    
+    try:
+        url = "https://api.open-meteo.com/v1/forecast"
+        params = {
+            "latitude": lat,
+            "longitude": lng,
+            "hourly": "temperature_2m,precipitation_probability,precipitation",
+            "temperature_unit": "fahrenheit",
+            "timezone": "auto"
+        }
+        
+        r = requests.get(url, params=params, timeout=10)
+        if not r.ok:
+            raise Exception(f"Open-Meteo API error: {r.status_code} {r.text}")
+        
+        data = r.json()
+        hourly = data.get("hourly", {})
+        
+        # Get current hour data (first entry in the hourly arrays)
+        if hourly and len(hourly.get("time", [])) > 0:
+            current_temp = hourly["temperature_2m"][0] if hourly.get("temperature_2m") else 65
+            current_precip_prob = hourly["precipitation_probability"][0] if hourly.get("precipitation_probability") else 0
+            current_precip = hourly["precipitation"][0] if hourly.get("precipitation") else 0
+            
+            # Calculate average conditions for the day (next 12 hours)
+            hours_to_check = min(12, len(hourly.get("time", [])))
+            avg_temp = sum(hourly["temperature_2m"][:hours_to_check]) / hours_to_check if hourly.get("temperature_2m") else current_temp
+            avg_precip_prob = sum(hourly["precipitation_probability"][:hours_to_check]) / hours_to_check if hourly.get("precipitation_probability") else current_precip_prob
+            max_precip_prob = max(hourly["precipitation_probability"][:hours_to_check]) if hourly.get("precipitation_probability") else current_precip_prob
+            
+            # Determine weather summary based on conditions
+            if max_precip_prob > 60:
+                summary = "rainy"
+            elif max_precip_prob > 30:
+                summary = "partly cloudy"
+            else:
+                summary = "clear"
+            
+            result = {
+                "summary": summary,
+                "temp_f": round(current_temp, 1),
+                "avg_temp_f": round(avg_temp, 1),
+                "precip_probability": round(current_precip_prob),
+                "avg_precip_probability": round(avg_precip_prob),
+                "max_precip_probability": round(max_precip_prob),
+                "precip_mm": round(current_precip, 2),
+                "has_poor_weather": max_precip_prob > 60  # Threshold for outdoor activity warnings
+            }
+        else:
+            # Fallback if no data
+            result = {
+                "summary": "clear",
+                "temp_f": 65,
+                "avg_temp_f": 65,
+                "precip_probability": 0,
+                "avg_precip_probability": 0,
+                "max_precip_probability": 0,
+                "precip_mm": 0,
+                "has_poor_weather": False
+            }
+        
+        # Cache the result
+        weather_cache.set(cache_key, result, WEATHER_TTL)
+        return result
+    
+    except Exception as e:
+        print(f"Error fetching weather from Open-Meteo: {e}")
+        # Return fallback weather data (don't cache errors)
+        return {
+            "summary": "clear",
+            "temp_f": 65,
+            "avg_temp_f": 65,
+            "precip_probability": 0,
+            "avg_precip_probability": 0,
+            "max_precip_probability": 0,
+            "precip_mm": 0,
+            "has_poor_weather": False
+        }
 
 # ---------------- Geoapify helpers ----------------
 
 def geocode_address(address):
     """
     Uses Geoapify Forward Geocoding to resolve an address to (lat, lon).
+    Results are cached for 24 hours.
     """
+    # Check cache first
+    cache_key = f"geocode_{address.lower().strip()}"
+    cached_result = geocoding_cache.get(cache_key)
+    if cached_result:
+        print(f"✓ Cache hit: Geocoding for '{address}'")
+        return cached_result
+    
+    print(f"⚡ Cache miss: Geocoding '{address}'")
+    
     if not GEOAPIFY_KEY:
         raise Exception("GEOAPIFY_API_KEY not set in .env")
     url = "https://api.geoapify.com/v1/geocode/search"
@@ -51,7 +218,13 @@ def geocode_address(address):
     lon = props.get("lon") or props.get("longitude") or features[0].get("geometry", {}).get("coordinates", [None, None])[0]
     if lat is None or lon is None:
         raise Exception("Failed to extract coordinates from geocode response")
-    return float(lat), float(lon)
+    
+    result = (float(lat), float(lon))
+    
+    # Cache the result
+    geocoding_cache.set(cache_key, result, GEOCODING_TTL)
+    
+    return result
 
 def _map_interests_to_categories(interests):
     """
@@ -87,9 +260,18 @@ def fetch_places_from_geoapify(lat, lng, interests, max_distance, budget):
     """
     Query Geoapify Places API.
     Returns list of places in the same shape as your mock (id, name, lat, lng, type, cost, hours).
-    - categories param is required by Geoapify, so we map interests to categories (fallback to defaults).
-    - uses circle filter centered at lon,lat with radius meters.
+    Results are cached for 2 hours (places don't change often).
     """
+    # Create cache key based on location, interests, and distance
+    interests_sorted = sorted(interests or [])
+    cache_key = f"places_{round(lat, 2)}_{round(lng, 2)}_{'-'.join(interests_sorted)}_{max_distance}_{budget}"
+    cached_result = places_cache.get(cache_key)
+    if cached_result:
+        print(f"✓ Cache hit: Places for ({lat}, {lng})")
+        return cached_result
+    
+    print(f"⚡ Cache miss: Fetching places for ({lat}, {lng})")
+    
     if not GEOAPIFY_KEY:
         raise Exception("GEOAPIFY_API_KEY not set in .env")
 
@@ -147,6 +329,26 @@ def fetch_places_from_geoapify(lat, lng, interests, max_distance, budget):
         # price: there may be 'price' or 'price_level' or use conditions; fallback Unknown
         cost = p.get("price") or p.get("price_level") or p.get("fee") or "Unknown"
 
+        # Extract address information
+        address_line1 = p.get("address_line1") or ""
+        address_line2 = p.get("address_line2") or ""
+        street = p.get("street") or ""
+        housenumber = p.get("housenumber") or ""
+        city = p.get("city") or ""
+        state = p.get("state") or ""
+        postcode = p.get("postcode") or ""
+        country = p.get("country") or ""
+        
+        # Build formatted address
+        street_address = f"{housenumber} {street}".strip() if housenumber or street else address_line1
+        city_state = f"{city}, {state}".strip(", ") if city or state else ""
+        
+        # Full formatted address
+        formatted_address = p.get("formatted") or ""
+        if not formatted_address:
+            address_parts = [part for part in [street_address, city_state, postcode] if part]
+            formatted_address = ", ".join(address_parts)
+        
         place_obj = {
             "id": p.get("place_id") or p.get("osm_id") or p.get("xid") or p.get("id") or str(p.get("lat")) + "_" + str(p.get("lon")),
             "name": p.get("name") or p.get("formatted") or "Unknown",
@@ -154,15 +356,24 @@ def fetch_places_from_geoapify(lat, lng, interests, max_distance, budget):
             "lng": float(lon_p) if lon_p is not None else None,
             "type": type_str,
             "cost": cost,
-            "hours": hours
+            "hours": hours,
+            "address": formatted_address,
+            "street": street_address,
+            "city": city,
+            "state": state,
+            "country": country
         }
         places.append(place_obj)
 
+    # Cache the result
+    places_cache.set(cache_key, places, PLACES_TTL)
+    
     return places
 
 def calculate_route(waypoints, travel_mode):
     """
     Calculate routing data between multiple waypoints using Geoapify Routing API.
+    Results are cached for 6 hours (routes are relatively static).
     
     Args:
         waypoints: List of (lat, lng) tuples representing waypoints in order
@@ -174,6 +385,16 @@ def calculate_route(waypoints, travel_mode):
         - total_time_min: Total time in minutes
         - legs: List of leg data (distance and time for each segment)
     """
+    # Create cache key from waypoints and travel mode (round to 3 decimals)
+    waypoints_key = "_".join([f"{round(lat, 3)},{round(lng, 3)}" for lat, lng in waypoints])
+    cache_key = f"route_{waypoints_key}_{travel_mode}"
+    cached_result = routing_cache.get(cache_key)
+    if cached_result:
+        print(f"✓ Cache hit: Route calculation")
+        return cached_result
+    
+    print(f"⚡ Cache miss: Calculating route")
+    
     if not GEOAPIFY_KEY:
         raise Exception("GEOAPIFY_API_KEY not set in .env")
     
@@ -235,15 +456,20 @@ def calculate_route(waypoints, travel_mode):
                 "time_min": leg_time_s / 60
             })
         
-        return {
+        result = {
             "total_distance_km": round(total_distance_km, 2),
             "total_time_min": round(total_time_min, 1),
             "legs": legs
         }
+        
+        # Cache the result
+        routing_cache.set(cache_key, result, ROUTING_TTL)
+        
+        return result
     
     except Exception as e:
         print(f"Routing error: {e}")
-        # Return fallback data
+        # Return fallback data (don't cache errors)
         return {
             "total_distance_km": 0,
             "total_time_min": 0,
@@ -366,15 +592,60 @@ def call_llm(prefs, places, weather, travel_times):
     response = call_llm_with_fallback("gpt-4o-mini", messages, temperature=0.7)
     
     try:
-        return json.loads(response.choices[0].message.content)
+        content = response.choices[0].message.content
+        if not content or content.strip() == "":
+            print("LLM returned empty content, using fallback")
+            return []
+        
+        # Remove markdown code blocks if present
+        content = content.strip()
+        if content.startswith("```"):
+            content = content.split("```")[1]
+            if content.startswith("json"):
+                content = content[4:]
+            content = content.strip()
+        
+        return json.loads(content)
     except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse LLM response as JSON: {str(e)}")
+        print(f"Failed to parse LLM response as JSON: {str(e)}")
+        print(f"LLM response content: {response.choices[0].message.content[:500]}")
+        return []  # Return empty list as fallback
+    except Exception as e:
+        print(f"Unexpected error parsing LLM response: {str(e)}")
+        return []
 
-def score_activities_with_llm(prefs, places):
+def score_activities_with_llm(prefs, places, weather=None):
     """
     Use LLM to score each activity's relevance to user preferences and provide reasoning.
-    Returns a dict mapping place names to {relevance_score, matched_reason}.
+    Now includes weather-aware scoring and outdoor activity detection.
+    Results are cached for 1 hour.
+    Returns a dict mapping place names to {relevance_score, matched_reason, is_outdoor, weather_warning}.
     """
+    # Create cache key from preferences, place names, and weather conditions
+    place_names = sorted([p.get('name', '') for p in places[:20]])
+    interests_sorted = sorted(prefs.get('interests', []))
+    weather_key = f"{weather.get('summary', 'clear')}_{weather.get('max_precip_probability', 0)}" if weather else "no_weather"
+    cache_key = hashlib.md5(
+        f"llm_score_{'-'.join(place_names)}_{'-'.join(interests_sorted)}_{prefs.get('budget', 'medium')}_{weather_key}".encode()
+    ).hexdigest()
+    
+    cached_result = llm_scoring_cache.get(cache_key)
+    if cached_result:
+        print(f"✓ Cache hit: LLM activity scoring")
+        return cached_result
+    
+    print(f"⚡ Cache miss: Running LLM activity scoring")
+    
+    weather_context = ""
+    if weather:
+        weather_context = f"""
+    Current Weather Conditions:
+    - Summary: {weather.get('summary', 'clear')}
+    - Temperature: {weather.get('temp_f', 65)}°F (Avg: {weather.get('avg_temp_f', 65)}°F)
+    - Precipitation Probability: {weather.get('max_precip_probability', 0)}% (max in next 12 hours)
+    - Poor Weather Alert: {'Yes - High chance of rain' if weather.get('has_poor_weather') else 'No'}
+    """
+    
     prompt = f"""
     You are an expert trip advisor analyzing activities for a traveler.
     
@@ -382,6 +653,7 @@ def score_activities_with_llm(prefs, places):
     - Interests: {prefs.get('interests', [])}
     - Budget: {prefs.get('budget', 'medium')}
     - Travel Mode: {prefs.get('travel_mode', 'driving-car')}
+    {weather_context}
     
     Available Activities:
     {json.dumps([{
@@ -397,23 +669,35 @@ def score_activities_with_llm(prefs, places):
     For EACH activity listed above, provide:
     1. A relevance score (0-100) indicating how well it matches the user's preferences
     2. A brief, engaging reason (1-2 sentences) explaining why this activity is a good match
+    3. Whether the activity is primarily outdoors (true/false)
+    4. A weather warning message if outdoor activity and poor weather conditions exist (or null if not applicable)
     
     SCORING CRITERIA:
-    - Interest alignment: Does it match their stated interests? (50 points)
+    - Interest alignment: Does it match their stated interests? (40 points)
     - Budget compatibility: Does the cost fit their budget level? (20 points)
     - Accessibility: Is the travel distance/time reasonable? (15 points)
     - Uniqueness/Quality: Is it a notable or special experience? (15 points)
+    - Weather suitability: For outdoor activities in poor weather, reduce score by 10-20 points (10 points)
+    
+    WEATHER CONSIDERATIONS:
+    - If precipitation probability > 60% and activity is outdoors, reduce relevance score by 10-20 points
+    - Provide a helpful weather warning (e.g., "⚠️ High chance of rain - consider bringing an umbrella or rescheduling")
+    - Indoor activities should NOT be penalized and may even be prioritized in poor weather
     
     OUTPUT FORMAT:
-    Return ONLY a JSON object mapping activity names to their scores and reasons:
+    Return ONLY a JSON object mapping activity names to their scores, reasons, outdoor status, and warnings:
     {{
         "Activity Name 1": {{
             "relevance_score": 85,
-            "matched_reason": "This museum perfectly aligns with your interest in art and culture, offering world-class exhibits at an affordable price point."
+            "matched_reason": "This museum perfectly aligns with your interest in art and culture, offering world-class exhibits at an affordable price point.",
+            "is_outdoor": false,
+            "weather_warning": null
         }},
-        "Activity Name 2": {{
-            "relevance_score": 72,
-            "matched_reason": "A beautiful outdoor space ideal for relaxation, with free admission that fits your budget-conscious approach."
+        "Park Name": {{
+            "relevance_score": 62,
+            "matched_reason": "A beautiful outdoor space ideal for relaxation with free admission.",
+            "is_outdoor": true,
+            "weather_warning": "⚠️ High chance of rain today - bring rain gear or consider visiting when weather improves"
         }}
     }}
     
@@ -421,6 +705,8 @@ def score_activities_with_llm(prefs, places):
     - Score ALL activities provided
     - Be specific in reasons, referencing their actual interests
     - Keep reasons concise and enthusiastic
+    - REDUCE scores for outdoor activities when weather is poor (>60% precipitation)
+    - Provide clear, actionable weather warnings for outdoor activities in poor conditions
     - Return ONLY the JSON object, no markdown, no extra text
     """
     
@@ -440,11 +726,21 @@ def score_activities_with_llm(prefs, places):
                 content = content[4:]
             content = content.strip()
         
-        return json.loads(content)
+        result = json.loads(content)
+        
+        # Cache the result
+        llm_scoring_cache.set(cache_key, result, LLM_SCORING_TTL)
+        
+        return result
     except Exception as e:
         print(f"Error scoring activities with LLM: {e}")
-        # Return default scores if LLM fails
-        return {place['name']: {"relevance_score": 50, "matched_reason": "This activity offers a great local experience."} for place in places[:20]}
+        # Return default scores if LLM fails (don't cache errors)
+        return {place['name']: {
+            "relevance_score": 50, 
+            "matched_reason": "This activity offers a great local experience.",
+            "is_outdoor": False,
+            "weather_warning": None
+        } for place in places[:20]}
 
 def call_llm_smart(prefs, places, weather, start_time, end_time):
     """
@@ -507,16 +803,27 @@ def call_llm_smart(prefs, places, weather, start_time, end_time):
     response = call_llm_with_fallback("gpt-4o-mini", messages, temperature=0.7)
     
     try:
-        content = response.choices[0].message.content.strip()
+        content = response.choices[0].message.content
+        if not content or content.strip() == "":
+            print("LLM smart returned empty content, using fallback")
+            return []
+        
+        content = content.strip()
         # Remove markdown code blocks if present
         if content.startswith("```"):
             content = content.split("```")[1]
             if content.startswith("json"):
                 content = content[4:]
             content = content.strip()
+        
         return json.loads(content)
     except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse LLM response as JSON: {str(e)}")
+        print(f"Failed to parse LLM smart response as JSON: {str(e)}")
+        print(f"LLM response content: {response.choices[0].message.content[:500]}")
+        return []  # Return empty list as fallback
+    except Exception as e:
+        print(f"Unexpected error parsing LLM smart response: {str(e)}")
+        return []
 
 def plan_trip(data):
     prefs = {
@@ -524,7 +831,8 @@ def plan_trip(data):
         "interests": data.get("interests", []),
         "budget": data.get("budget", "low"),
         "max_distance": data.get("max_distance", 30),
-        "travel_mode": data.get("travel_mode", "driving-car")
+        "travel_mode": data.get("travel_mode", "driving-car"),
+        "use_weather": data.get("use_weather", True)  # Default to True for backward compatibility
     }
     if MOCK:
         places = MOCK_PLACES
@@ -544,35 +852,47 @@ def plan_trip(data):
         # Calculate travel times from starting point to each place
         places = calculate_travel_time_from_start(lat, lng, places, prefs["travel_mode"])
         
-        # TODO: swap in real weather API as needed
-        weather = MOCK_WEATHER
+        # Fetch real weather data from Open-Meteo
+        weather = fetch_weather_from_openmeteo(lat, lng)
         travel_times = {place['id']: place.get('travel_time_min', 10) for place in places}
     
-    # Score activities with LLM to get relevance scores and matched reasons
-    activity_scores = score_activities_with_llm(prefs, places)
+    # Score activities with LLM - pass weather only if use_weather is enabled
+    weather_for_scoring = weather if prefs["use_weather"] else None
+    activity_scores = score_activities_with_llm(prefs, places, weather_for_scoring)
     
-    # Add relevance scores and matched reasons to each place
+    # Add relevance scores, matched reasons, and weather info to each place
     for place in places:
         place_name = place.get('name')
         if place_name in activity_scores:
             place['relevance_score'] = activity_scores[place_name].get('relevance_score', 50)
             place['matched_reason'] = activity_scores[place_name].get('matched_reason', 'A great local experience.')
+            place['is_outdoor'] = activity_scores[place_name].get('is_outdoor', False)
+            place['weather_warning'] = activity_scores[place_name].get('weather_warning', None)
         else:
             place['relevance_score'] = 50
             place['matched_reason'] = 'An interesting activity to explore.'
+            place['is_outdoor'] = False
+            place['weather_warning'] = None
     
     # Sort places by relevance score (highest first)
     places_sorted = sorted(places, key=lambda x: x.get('relevance_score', 0), reverse=True)
     
     polished_itinerary = call_llm(prefs, places_sorted, weather, travel_times)
     
-    # Add lat/lng and distance info to itinerary items by matching names
+    # Add lat/lng, distance, address info, and weather warnings to itinerary items by matching names
     for item in polished_itinerary:
         matching_place = next((p for p in places_sorted if p['name'] == item['name']), None)
         if matching_place:
             item['lat'] = matching_place.get('lat')
             item['lng'] = matching_place.get('lng')
             item['distance_km'] = matching_place.get('distance_km', 0)
+            item['address'] = matching_place.get('address', 'Address not available')
+            item['street'] = matching_place.get('street', '')
+            item['city'] = matching_place.get('city', '')
+            item['state'] = matching_place.get('state', '')
+            item['country'] = matching_place.get('country', '')
+            item['is_outdoor'] = matching_place.get('is_outdoor', False)
+            item['weather_warning'] = matching_place.get('weather_warning', None)
     
     return {
         "itinerary": polished_itinerary,
@@ -584,13 +904,15 @@ def plan_trip(data):
 def plan_trip_smart(data):
     """
     Smart trip planning with time-based scheduling, realistic durations, and cost estimation.
+    Now also returns all_activities for browsing on the main explore page.
     """
     prefs = {
         "starting_address": data.get("starting_address", "Boston, MA"),
         "interests": data.get("interests", []),
         "budget": data.get("budget", "low"),
         "max_distance": data.get("max_distance", 30),
-        "travel_mode": data.get("travel_mode", "driving-car")
+        "travel_mode": data.get("travel_mode", "driving-car"),
+        "use_weather": data.get("use_weather", True)  # Default to True for backward compatibility
     }
     
     start_time = data.get("start_time", "09:00")
@@ -613,40 +935,75 @@ def plan_trip_smart(data):
         # Calculate travel times from starting point to each place
         places = calculate_travel_time_from_start(lat, lng, places, prefs["travel_mode"])
         
-        # TODO: swap in real weather API as needed
-        weather = MOCK_WEATHER
+        # Fetch real weather data from Open-Meteo
+        weather = fetch_weather_from_openmeteo(lat, lng)
     
     # Call enhanced LLM with time constraints
     smart_itinerary = call_llm_smart(prefs, places, weather, start_time, end_time)
     
-    # Also score activities to get relevance scores for the generated itinerary
-    activity_scores = score_activities_with_llm(prefs, places)
+    # Score activities - pass weather only if use_weather is enabled
+    weather_for_scoring = weather if prefs["use_weather"] else None
+    activity_scores = score_activities_with_llm(prefs, places, weather_for_scoring)
     
-    # Add lat/lng, distance info, and relevance scoring to itinerary items by matching names
+    # Prepare all activities with scores for browsing (sorted by relevance)
+    all_activities = []
+    for place in places:
+        place_name = place.get('name')
+        if place_name in activity_scores:
+            place['relevance_score'] = activity_scores[place_name].get('relevance_score', 50)
+            place['matched_reason'] = activity_scores[place_name].get('matched_reason', 'A great local experience.')
+            place['is_outdoor'] = activity_scores[place_name].get('is_outdoor', False)
+            place['weather_warning'] = activity_scores[place_name].get('weather_warning', None)
+        else:
+            place['relevance_score'] = 50
+            place['matched_reason'] = 'An interesting activity to explore.'
+            place['is_outdoor'] = False
+            place['weather_warning'] = None
+        all_activities.append(place)
+    
+    # Sort by relevance score
+    all_activities_sorted = sorted(all_activities, key=lambda x: x.get('relevance_score', 0), reverse=True)
+    
+    # Add lat/lng, distance info, address, relevance scoring, and weather info to itinerary items by matching names
     for item in smart_itinerary:
         matching_place = next((p for p in places if p['name'] == item['name']), None)
         if matching_place:
             item['lat'] = matching_place.get('lat')
             item['lng'] = matching_place.get('lng')
             item['distance_km'] = matching_place.get('distance_km', 0)
+            item['address'] = matching_place.get('address', 'Address not available')
+            item['street'] = matching_place.get('street', '')
+            item['city'] = matching_place.get('city', '')
+            item['state'] = matching_place.get('state', '')
+            item['country'] = matching_place.get('country', '')
         else:
             # If no exact match, try to find a similar place or use defaults
             item['lat'] = None
             item['lng'] = None
             item['distance_km'] = 0
+            item['address'] = 'Address not available'
+            item['street'] = ''
+            item['city'] = ''
+            item['state'] = ''
+            item['country'] = ''
         
-        # Add relevance score and matched_reason for consistency
+        # Add relevance score, matched_reason, and weather info for consistency
         item_name = item.get('name')
         if item_name in activity_scores:
             item['relevance_score'] = activity_scores[item_name].get('relevance_score', 50)
             item['matched_reason'] = activity_scores[item_name].get('matched_reason', item.get('reason', 'A great activity to enjoy.'))
+            item['is_outdoor'] = activity_scores[item_name].get('is_outdoor', False)
+            item['weather_warning'] = activity_scores[item_name].get('weather_warning', None)
         else:
             item['relevance_score'] = 50
             item['matched_reason'] = item.get('reason', 'A great activity to enjoy.')
+            item['is_outdoor'] = False
+            item['weather_warning'] = None
     
-    # Calculate total cost and time
+    # Calculate total cost, activity time, and travel time separately
     total_cost = 0
-    total_time_hours = 0
+    total_activity_hours = 0
+    total_travel_minutes = 0
     
     for item in smart_itinerary:
         # Parse cost
@@ -658,27 +1015,33 @@ def plan_trip_smart(data):
             except ValueError:
                 pass
         
-        # Parse duration
+        # Parse activity duration
         duration_str = item.get('duration', '0 hours')
         try:
             if 'hour' in duration_str:
                 hours = float(duration_str.split('hour')[0].strip())
-                total_time_hours += hours
+                total_activity_hours += hours
             elif 'minute' in duration_str:
                 minutes = float(duration_str.split('minute')[0].strip())
-                total_time_hours += minutes / 60
+                total_activity_hours += minutes / 60
         except ValueError:
             pass
         
-        # Add travel time
+        # Add travel time separately
         travel_min = item.get('travel_time_min', 0)
-        total_time_hours += travel_min / 60
+        total_travel_minutes += travel_min
+    
+    # Calculate total time (activity + travel)
+    total_time_hours = total_activity_hours + (total_travel_minutes / 60)
     
     return {
         "itinerary": smart_itinerary,
+        "all_activities": all_activities_sorted,  # NEW: Full list for browsing
         "weather": weather,
         "places": places,
         "starting_coords": {"lat": lat, "lng": lng},
         "total_cost": round(total_cost, 2),
-        "total_time_hours": round(total_time_hours, 2)
+        "total_time_hours": round(total_time_hours, 2),
+        "total_activity_hours": round(total_activity_hours, 2),
+        "total_travel_hours": round(total_travel_minutes / 60, 2)
     }

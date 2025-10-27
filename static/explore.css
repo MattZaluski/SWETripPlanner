@@ -20,17 +20,20 @@ body {
 .header-content {
     max-width: 1400px;
     margin: 0 auto;
-    padding: 1rem 2rem;
+    padding: 0.5rem 2rem;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    height: 48px;
+    overflow: visible;
 }
 
 .logo {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: #C27D61; /* muted terracotta */
-    margin: 0;
+    height: 90px;
+    margin: -15px 0;
+    object-fit: contain;
+    position: relative;
+    z-index: 10;
 }
 
 .main-nav {
@@ -290,7 +293,7 @@ body {
     width: 18px;
     height: 18px;
     cursor: pointer;
-    accent-color: #8C9A6F;
+    accent-color: #B88088;
 }
 
 .more-link {
@@ -338,7 +341,7 @@ body {
 .card-image {
     width: 100%;
     height: 200px;
-    background: linear-gradient(135deg, #C27D61 0%, #8C9A6F 100%);
+    background: linear-gradient(135deg, #C27D61 0%, #B88088 100%);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -346,6 +349,15 @@ body {
     font-size: 3rem;
     position: relative;
     overflow: hidden;
+}
+
+.card-thumbnail {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    position: absolute;
+    top: 0;
+    left: 0;
 }
 
 .card-image::after {
@@ -457,12 +469,172 @@ body {
     margin-bottom: 0.5rem;
 }
 
+.card-address {
+    color: #666666;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    margin-bottom: 0.5rem;
+    font-style: italic;
+}
+
 .card-description {
     color: #666666;
     font-size: 0.95rem;
     line-height: 1.5;
     margin-bottom: 1rem;
     flex: 1;
+}
+
+/* Weather Warning Styles */
+.weather-warning {
+    background: linear-gradient(135deg, #fff3cd 0%, #fff8e1 100%);
+    border-left: 4px solid #ffc107;
+    padding: 0.75rem;
+    margin: 0.75rem 0;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    color: #856404;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    box-shadow: 0 2px 4px rgba(255, 193, 7, 0.1);
+}
+
+.itinerary-weather-warning {
+    background: linear-gradient(135deg, #fff3cd 0%, #fff8e1 100%);
+    border-left: 3px solid #ffc107;
+    padding: 0.5rem 0.75rem;
+    margin: 0.5rem 0;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    line-height: 1.3;
+    color: #856404;
+}
+
+/* Weather Widget Styles */
+.weather-widget {
+    background: linear-gradient(135deg, #E8F5E9 0%, #F1F8F4 100%);
+    border: 2px solid #4CAF50;
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 2px 8px rgba(76, 175, 80, 0.15);
+}
+
+.weather-widget.has-poor-weather {
+    background: linear-gradient(135deg, #FFF3E0 0%, #FFF8F0 100%);
+    border-color: #FF9800;
+    box-shadow: 0 2px 8px rgba(255, 152, 0, 0.15);
+}
+
+.weather-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #2E7D32;
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.weather-widget.has-poor-weather .weather-title {
+    color: #E65100;
+}
+
+#weather-icon {
+    font-size: 1.5rem;
+}
+
+.weather-info {
+    margin-bottom: 1rem;
+}
+
+.weather-temp {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #1B5E20;
+    margin-bottom: 0.25rem;
+}
+
+.weather-widget.has-poor-weather .weather-temp {
+    color: #BF360C;
+}
+
+.weather-condition {
+    font-size: 0.95rem;
+    color: #4CAF50;
+    font-weight: 500;
+    text-transform: capitalize;
+    margin-bottom: 0.5rem;
+}
+
+.weather-widget.has-poor-weather .weather-condition {
+    color: #F57C00;
+}
+
+.weather-precipitation {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+    color: #666;
+    margin-top: 0.5rem;
+}
+
+.precip-icon {
+    font-size: 1rem;
+}
+
+.weather-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    padding: 0.75rem;
+    background: white;
+    border-radius: 8px;
+    border: 2px solid #E0E0E0;
+    transition: all 0.3s ease;
+    margin-bottom: 0.75rem;
+}
+
+.weather-toggle:hover {
+    border-color: #4CAF50;
+    background: #F8FFF9;
+}
+
+.weather-toggle input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: #4CAF50;
+}
+
+.toggle-text {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #333;
+}
+
+.toggle-icon {
+    font-size: 1.1rem;
+    color: #4CAF50;
+    font-weight: 700;
+}
+
+.weather-toggle input[type="checkbox"]:not(:checked) ~ .toggle-text .toggle-icon {
+    display: none;
+}
+
+.weather-help-text {
+    font-size: 0.8rem;
+    color: #666;
+    font-style: italic;
+    line-height: 1.4;
 }
 
 .card-footer {
@@ -516,7 +688,7 @@ body {
 }
 
 .add-btn:disabled {
-    background: linear-gradient(135deg, #9CAA7F, #8C9A6F);
+    background: linear-gradient(135deg, #C89BA3, #B88088);
     cursor: not-allowed;
 }
 
@@ -646,12 +818,20 @@ body {
 .itinerary-card-image {
     width: 100%;
     height: 120px;
-    background: linear-gradient(135deg, #C27D61 0%, #8C9A6F 100%);
+    background: linear-gradient(135deg, #C27D61 0%, #B88088 100%);
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 2rem;
     color: white;
+    position: relative;
+    overflow: hidden;
+}
+
+.itinerary-thumbnail {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .itinerary-card-body {
@@ -666,6 +846,14 @@ body {
     color: #333333;
     margin-bottom: 0.5rem;
     font-size: 0.95rem;
+}
+
+.itinerary-card-address {
+    color: #666666;
+    font-size: 0.75rem;
+    line-height: 1.3;
+    margin-bottom: 0.5rem;
+    font-style: italic;
 }
 
 .itinerary-card-details {
@@ -754,14 +942,14 @@ body {
 }
 
 .share-btn {
-    background: linear-gradient(135deg, #9CAA7F, #8C9A6F);
+    background: linear-gradient(135deg, #C89BA3, #B88088);
     color: white;
 }
 
 .share-btn:hover:not(:disabled) {
-    background: linear-gradient(135deg, #8C9A6F, #7A8A5D);
+    background: linear-gradient(135deg, #B88088, #9E6B75);
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(140, 154, 111, 0.3);
+    box-shadow: 0 4px 12px rgba(184, 128, 136, 0.3);
 }
 
 .save-btn:disabled, .share-btn:disabled {
@@ -914,7 +1102,7 @@ body {
 
 .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #C27D61, #8C9A6F);
+    background: linear-gradient(90deg, #C27D61, #B88088);
     border-radius: 10px;
     transition: width 0.4s ease;
     width: 20%;
@@ -1030,13 +1218,13 @@ body {
 }
 
 .nav-btn.finish-btn {
-    background: linear-gradient(135deg, #9CAA7F, #8C9A6F);
+    background: linear-gradient(135deg, #C89BA3, #B88088);
 }
 
 .nav-btn.finish-btn:hover:not(:disabled) {
-    background: linear-gradient(135deg, #8C9A6F, #7A8A5D);
+    background: linear-gradient(135deg, #B88088, #9E6B75);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(140, 154, 111, 0.4);
+    box-shadow: 0 4px 12px rgba(184, 128, 136, 0.4);
 }
 
 /* Time Range Inputs */
@@ -1163,7 +1351,7 @@ body {
     top: 0;
     bottom: 0;
     width: 3px;
-    background: linear-gradient(to bottom, #C27D61, #9CAA7F);
+    background: linear-gradient(to bottom, #C27D61, #C89BA3);
 }
 
 .timeline-item {
@@ -1185,8 +1373,16 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
     font-size: 1.2rem;
     z-index: 2;
+}
+
+.timeline-thumbnail {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
 }
 
 .timeline-content {
@@ -1209,11 +1405,19 @@ body {
     font-size: 1.1rem;
     font-weight: 600;
     color: #1e293b;
-    margin-bottom: 0.75rem;
+    margin-bottom: 0.5rem;
     display: flex;
     align-items: center;
     gap: 0.75rem;
     flex-wrap: wrap;
+}
+
+.timeline-address {
+    color: #64748b;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    margin-bottom: 0.75rem;
+    font-style: italic;
 }
 
 .timeline-relevance {
@@ -1399,7 +1603,7 @@ body {
     left: 0;
     right: 0;
     bottom: 0;
-    background: linear-gradient(135deg, rgba(194, 125, 97, 0.05), rgba(140, 154, 111, 0.05));
+    background: linear-gradient(135deg, rgba(194, 125, 97, 0.05), rgba(184, 128, 136, 0.05));
     opacity: 0;
     transition: opacity 0.3s;
 }
@@ -1416,7 +1620,7 @@ body {
 
 .option-button.selected {
     border-color: #C27D61;
-    background: linear-gradient(135deg, rgba(194, 125, 97, 0.1), rgba(140, 154, 111, 0.1));
+    background: linear-gradient(135deg, rgba(194, 125, 97, 0.1), rgba(184, 128, 136, 0.1));
     box-shadow: 0 4px 16px rgba(194, 125, 97, 0.2);
 }
 

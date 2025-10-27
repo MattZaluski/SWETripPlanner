@@ -26,15 +26,38 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // Display mock weather (for completeness)
+            // Display weather information
             const weather = result.weather;
-            weatherInfo.textContent = `Weather (Mock): ${weather.summary}, Temp: ${weather.temp_f}°F, Precip: ${weather.precip}mm`;
+            const weatherDisplay = weather.has_poor_weather ? 
+                `☁️ ${weather.summary} • ${weather.temp_f}°F • ⚠️ ${weather.max_precip_probability}% chance of rain` :
+                `☀️ ${weather.summary} • ${weather.temp_f}°F`;
+            weatherInfo.textContent = `Today's Weather: ${weatherDisplay}`;
+            weatherInfo.style.padding = '0.75rem';
+            weatherInfo.style.background = weather.has_poor_weather ? '#fff3cd' : '#d1ecf1';
+            weatherInfo.style.borderRadius = '8px';
+            weatherInfo.style.marginBottom = '1rem';
 
             // Display LLM-generated itinerary
             itineraryList.innerHTML = '';
             result.itinerary.forEach(item => {
                 const div = document.createElement('div');
-                div.innerHTML = `<strong>${item.time}</strong>: ${item.name} (${item.cost}) - ${item.reason} (Travel: ${item.travel_time_min} min)`;
+                const address = item.address || 'Address not available';
+                
+                // Weather warning if applicable
+                const weatherWarning = item.weather_warning ? 
+                    `<div style="background: #fff3cd; padding: 0.5rem; border-radius: 6px; margin: 0.5rem 0; font-size: 0.9em;">
+                        ${item.weather_warning}
+                    </div>` : '';
+                
+                div.innerHTML = `<strong>${item.time}</strong>: ${item.name} (${item.cost})<br>
+                    <em style="font-size: 0.9em; color: #666;">📍 ${address}</em><br>
+                    ${weatherWarning}
+                    ${item.reason} (Travel: ${item.travel_time_min} min)`;
+                div.style.marginBottom = '1rem';
+                div.style.padding = '1rem';
+                div.style.background = item.weather_warning ? '#fff9e6' : '#f8f9fa';
+                div.style.borderRadius = '8px';
+                div.style.borderLeft = item.weather_warning ? '4px solid #ffc107' : '4px solid #8C9A6F';
                 itineraryList.appendChild(div);
             });
         } catch (err) {

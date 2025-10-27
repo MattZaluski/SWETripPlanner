@@ -11,7 +11,7 @@
     <!-- Header/Navigation -->
     <header class="main-header">
         <div class="header-content">
-            <h1 class="logo">Geo Guide</h1>
+            <img src="/static/images/logothing.png" alt="Geo Guide" class="logo">
             <nav class="main-nav">
                 <a href="/" class="nav-link">Home</a>
                 <a href="/explore" class="nav-link active">Plan Trip</a>
@@ -83,6 +83,32 @@
         <div class="content-wrapper">
             <!-- Left Sidebar -->
             <aside class="sidebar">
+                <!-- Weather Widget -->
+                <div class="weather-widget" id="weather-widget" style="display: none;">
+                    <h3 class="weather-title">
+                        <span id="weather-icon">☀️</span>
+                        Current Weather
+                    </h3>
+                    <div class="weather-info">
+                        <div class="weather-temp" id="weather-temp">--°F</div>
+                        <div class="weather-condition" id="weather-condition">Loading...</div>
+                        <div class="weather-precipitation" id="weather-precipitation">
+                            <span class="precip-icon">💧</span>
+                            <span id="precip-value">--%</span> chance of rain
+                        </div>
+                    </div>
+                    <label class="weather-toggle">
+                        <input type="checkbox" id="use-weather-checkbox" checked>
+                        <span class="toggle-text">
+                            <span class="toggle-icon">✓</span>
+                            Use weather in recommendations
+                        </span>
+                    </label>
+                    <div class="weather-help-text">
+                        When enabled, outdoor activities are deprioritized during bad weather
+                    </div>
+                </div>
+
                 <h3 class="filter-section-title">Activity Filters</h3>
                 <div class="filter-group">
                     <label class="filter-checkbox">

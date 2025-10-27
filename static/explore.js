@@ -8,10 +8,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const cardsContainer = document.getElementById('cards-container');
     const loadingMessage = document.getElementById('loading');
 
-    // Infinite scroll state
+    // Pagination state
     let allItineraryItems = [];
     let displayedCount = 0;
     const CARDS_PER_LOAD = 3;
+    let searchSessionId = null;
+    let currentOffset = 0;
+    let hasMoreResults = false;
+    let isLoadingMore = false;
     
     // Itinerary state
     let itineraryItems = [];
@@ -20,6 +24,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Store starting coordinates and travel mode
     let startingCoords = null;
     let currentTravelMode = 'driving-car';
+    
+    // Pre-loaded activities from AI generation
+    let preloadedActivities = null;
 
     // Budget slider label update
     const budgetLabel = document.querySelector('.budget-label');
@@ -39,13 +46,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    async function handleSearch() {
+    async function handleSearch(usePreloaded = false) {
+        // If we have preloaded activities from AI generation, use those
+        if (usePreloaded && preloadedActivities) {
+            displayCards(preloadedActivities);
+            preloadedActivities = null; // Clear after use
+            return;
+        }
+        
         const startingAddress = startingAddressInput.value.trim();
         const interests = interestsInput.value.split(',').map(i => i.trim()).filter(i => i);
         const maxDistance = parseFloat(maxDistanceSelect.value);
         const budgetValue = parseInt(budgetSlider.value);
         const budget = budgetLabels[budgetValue];
         const travelMode = travelModeSelect.value;
+        const useWeather = document.getElementById('use-weather-checkbox').checked;
         
         currentTravelMode = travelMode;
 
@@ -56,6 +71,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         loadingMessage.style.display = 'block';
         cardsContainer.innerHTML = '';
+        
+        // Reset pagination state for new search
+        searchSessionId = null;
+        currentOffset = 0;
+        hasMoreResults = false;
         
         itineraryItems = [];
         itineraryCardsContainer.innerHTML = '<p class="empty-itinerary-message">Add activities to your itinerary</p>';
@@ -70,7 +90,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     interests: interests,
                     budget: budget,
                     max_distance: maxDistance,
-                    travel_mode: travelMode
+                    travel_mode: travelMode,
+                    use_weather: useWeather,
+                    offset: 0,
+                    limit: 10
                 })
             });
 
@@ -82,8 +105,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
+            // Store pagination state
+            searchSessionId = result.session_id;
+            currentOffset = result.limit;
+            hasMoreResults = result.has_more;
+            
             // Store starting coordinates
             startingCoords = result.starting_coords;
+            
+            // Display weather widget
+            displayWeatherWidget(result.weather);
             
             displayCards(result.itinerary || []);
 
@@ -92,26 +123,67 @@ document.addEventListener('DOMContentLoaded', () => {
             loadingMessage.style.display = 'none';
         }
     }
+    
+    function displayWeatherWidget(weather) {
+        if (!weather) return;
+        
+        const weatherWidget = document.getElementById('weather-widget');
+        const weatherIcon = document.getElementById('weather-icon');
+        const weatherTemp = document.getElementById('weather-temp');
+        const weatherCondition = document.getElementById('weather-condition');
+        const precipValue = document.getElementById('precip-value');
+        
+        // Show the widget
+        weatherWidget.style.display = 'block';
+        
+        // Update weather icon based on conditions
+        const icons = {
+            'clear': '☀️',
+            'partly cloudy': '⛅',
+            'cloudy': '☁️',
+            'rainy': '🌧️',
+            'stormy': '⛈️'
+        };
+        weatherIcon.textContent = icons[weather.summary] || '🌤️';
+        
+        // Update temperature and condition
+        weatherTemp.textContent = `${weather.temp_f}°F`;
+        weatherCondition.textContent = weather.summary;
+        precipValue.textContent = `${weather.max_precip_probability}%`;
+        
+        // Apply "poor weather" styling if needed
+        if (weather.has_poor_weather) {
+            weatherWidget.classList.add('has-poor-weather');
+        } else {
+            weatherWidget.classList.remove('has-poor-weather');
+        }
+    }
 
-    function displayCards(itinerary) {
+    function displayCards(itinerary, append = false) {
         loadingMessage.style.display = 'none';
-        cardsContainer.innerHTML = '';
+        
+        if (!append) {
+            cardsContainer.innerHTML = '';
+        }
 
         if (!itinerary || itinerary.length === 0) {
-            cardsContainer.innerHTML = `
-                <div class="empty-message">
-                    <p>No activities found. Try adjusting your search criteria.</p>
-                </div>
-            `;
-            const loadMoreBtn = document.getElementById('load-more-btn');
-            if (loadMoreBtn) loadMoreBtn.style.display = 'none';
+            if (!append) {
+                cardsContainer.innerHTML = `
+                    <div class="empty-message">
+                        <p>No activities found. Try adjusting your search criteria.</p>
+                    </div>
+                `;
+            }
+            updateLoadMoreButton();
             return;
         }
 
-        allItineraryItems = itinerary;
-        displayedCount = 0;
-
-        loadMoreCards();
+        // Display all cards immediately (no incremental loading from memory)
+        itinerary.forEach((item, index) => {
+            const card = createActivityCard(item, index);
+            cardsContainer.appendChild(card);
+        });
+        
         updateLoadMoreButton();
     }
     
@@ -122,31 +194,73 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        if (displayedCount >= allItineraryItems.length) {
-            loadMoreBtn.style.display = 'none';
-        } else {
+        // Show button only if there are more results on the server
+        if (hasMoreResults && !isLoadingMore) {
             loadMoreBtn.style.display = 'block';
+            loadMoreBtn.textContent = 'Load More Activities';
+            loadMoreBtn.disabled = false;
+        } else if (isLoadingMore) {
+            loadMoreBtn.style.display = 'block';
+            loadMoreBtn.textContent = 'Loading...';
+            loadMoreBtn.disabled = true;
+        } else {
+            loadMoreBtn.style.display = 'none';
         }
     }
 
-    function loadMoreCards() {
-        const cardsToDisplay = allItineraryItems.slice(
-            displayedCount, 
-            displayedCount + CARDS_PER_LOAD
-        );
-
-        if (cardsToDisplay.length === 0) {
+    async function loadMoreCards() {
+        if (isLoadingMore || !hasMoreResults || !searchSessionId) {
             return;
         }
-
-        cardsToDisplay.forEach((item, index) => {
-            const cardIndex = displayedCount + index;
-            const card = createActivityCard(item, cardIndex);
-            cardsContainer.appendChild(card);
-        });
-
-        displayedCount += cardsToDisplay.length;
+        
+        isLoadingMore = true;
         updateLoadMoreButton();
+        
+        try {
+            const startingAddress = startingAddressInput.value.trim();
+            const interests = interestsInput.value.split(',').map(i => i.trim()).filter(i => i);
+            const maxDistance = parseFloat(maxDistanceSelect.value);
+            const budgetValue = parseInt(budgetSlider.value);
+            const budget = budgetLabels[budgetValue];
+            const travelMode = travelModeSelect.value;
+            const useWeather = document.getElementById('use-weather-checkbox').checked;
+            
+            const response = await fetch('/api/plan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    starting_address: startingAddress,
+                    interests: interests,
+                    budget: budget,
+                    max_distance: maxDistance,
+                    travel_mode: travelMode,
+                    use_weather: useWeather,
+                    session_id: searchSessionId,
+                    offset: currentOffset,
+                    limit: 10
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.error) {
+                alert(result.error);
+                return;
+            }
+            
+            // Update pagination state
+            currentOffset += result.limit;
+            hasMoreResults = result.has_more;
+            
+            // Append new cards
+            displayCards(result.itinerary || [], true);
+            
+        } catch (err) {
+            alert('Error loading more: ' + err.message);
+        } finally {
+            isLoadingMore = false;
+            updateLoadMoreButton();
+        }
     }
     
     document.addEventListener('click', (e) => {
@@ -170,8 +284,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const description = item.matched_reason || item.reason || 'A great place to visit during your trip.';
         const shortDescription = description.substring(0, 140) + (description.length > 140 ? '...' : '');
 
-        const emojis = ['🎨', '🏛️', '🌳', '🍽️', '🎭', '🎪', '🏔️', '🏖️', '🎪', '🎠', '🎯', '🏺', '🎬', '🎵', '🎸'];
-        const emoji = emojis[index % emojis.length];
+        // Alternate between two placeholder images
+        const imageUrl = index % 2 === 0 ? '/static/images/image1.jfif' : '/static/images/image2.jpg';
         
         // Display distance and travel time
         const distanceKm = item.distance_km || 0;
@@ -188,9 +302,18 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
         ` : '';
 
+        const address = item.address || 'Address not available';
+        
+        // Weather warning display
+        const weatherWarning = item.weather_warning ? `
+            <div class="weather-warning">
+                ${item.weather_warning}
+            </div>
+        ` : '';
+        
         card.innerHTML = `
             <div class="card-image">
-                ${emoji}
+                <img src="${imageUrl}" alt="Activity" class="card-thumbnail">
                 ${relevanceBadge}
             </div>
             <div class="card-body">
@@ -198,11 +321,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${stars}
                 </div>
                 <h3 class="card-title">${item.name || 'Activity'}</h3>
+                <p class="card-address">📍 ${address}</p>
+                ${weatherWarning}
                 <p class="card-description">${shortDescription}</p>
                 <div class="card-footer">
                     <div>
                         <div class="card-price">${item.cost || 'Free'}</div>
-                        <div class="distance-info">📍 ${distanceDisplay}</div>
+                        <div class="distance-info">🚗 ${distanceDisplay}</div>
                     </div>
                     <div class="card-actions">
                         <button class="add-btn" ${isInItinerary ? 'disabled' : ''}>${isInItinerary ? 'ADDED' : 'ADD'}</button>
@@ -250,19 +375,26 @@ document.addEventListener('DOMContentLoaded', () => {
         card.className = 'itinerary-card';
         card.setAttribute('data-item-id', JSON.stringify(item));
         
-        const emojis = ['🎨', '🏛️', '🌳', '🍽️', '🎭', '🎪', '🏔️', '🏖️', '🎪', '🎠', '🎯', '🏺', '🎬', '🎵', '🎸'];
-        const randomIndex = Math.floor(Math.random() * emojis.length);
-        const emoji = emojis[randomIndex];
+        // Alternate between two placeholder images
+        const imageUrl = Math.random() > 0.5 ? '/static/images/image1.jfif' : '/static/images/image2.jpg';
         
         const costText = item.cost || 'Free';
         const distanceKm = item.distance_km || 0;
+        const address = item.address || 'Address not available';
+        
+        // Weather warning for itinerary
+        const weatherWarning = item.weather_warning ? `
+            <div class="itinerary-weather-warning">${item.weather_warning}</div>
+        ` : '';
         
         card.innerHTML = `
             <div class="itinerary-card-image">
-                ${emoji}
+                <img src="${imageUrl}" alt="Activity" class="itinerary-thumbnail">
             </div>
             <div class="itinerary-card-body">
                 <div class="itinerary-card-name">${item.name || 'Activity'}</div>
+                <div class="itinerary-card-address">📍 ${address}</div>
+                ${weatherWarning}
                 <div class="itinerary-card-details">${distanceKm} km • ${costText}</div>
                 <div class="itinerary-card-details itinerary-route-info">Calculating route...</div>
                 <button class="itinerary-remove-btn" data-remove-id="${JSON.stringify(item)}">Remove</button>
@@ -542,6 +674,11 @@ document.addEventListener('DOMContentLoaded', () => {
     function openModal() {
         modal.classList.add('active');
         currentQuestion = 0;
+        
+        // Ensure navigation buttons are visible
+        if (prevBtn) prevBtn.style.display = 'inline-block';
+        if (nextBtn) nextBtn.style.display = 'inline-block';
+        
         renderQuestion();
         updateProgress();
     }
@@ -1003,20 +1140,25 @@ document.addEventListener('DOMContentLoaded', () => {
         const itinerary = result.itinerary || [];
         const totalCost = result.total_cost || 0;
         const totalTime = result.total_time_hours || 0;
+        const activityTime = result.total_activity_hours || 0;
+        const travelTime = result.total_travel_hours || 0;
         
         let itineraryHTML = `
             <div class="generated-itinerary">
                 <h3>🎉 Your Personalized Itinerary</h3>
                 <div class="itinerary-summary">
                     <span class="summary-item">📍 ${itinerary.length} Activities</span>
-                    <span class="summary-item">💰 Total: $${totalCost.toFixed(2)}</span>
-                    <span class="summary-item">⏱️ Duration: ${Math.floor(totalTime)}h ${Math.round((totalTime % 1) * 60)}m</span>
+                    <span class="summary-item">💰 Cost: $${totalCost.toFixed(2)}</span>
+                    <span class="summary-item">🎯 Activity Time: ${Math.floor(activityTime)}h ${Math.round((activityTime % 1) * 60)}m</span>
+                    <span class="summary-item">🚗 Travel Time: ${Math.floor(travelTime)}h ${Math.round((travelTime % 1) * 60)}m</span>
+                    <span class="summary-item">⏱️ Total: ${Math.floor(totalTime)}h ${Math.round((totalTime % 1) * 60)}m</span>
                 </div>
                 <div class="itinerary-timeline">
         `;
 
         itinerary.forEach((item, index) => {
-            const emoji = ['🎨', '🏛️', '🌳', '🍽️', '🎭', '🎪', '🏔️', '🏖️', '☕', '🎠'][index % 10];
+            // Alternate between two placeholder images
+            const imageUrl = index % 2 === 0 ? '/static/images/image1.jfif' : '/static/images/image2.jpg';
             
             // Use matched_reason if available, fallback to reason
             const reasonText = item.matched_reason || item.reason || 'A great activity for your trip!';
@@ -1029,15 +1171,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 </span>
             ` : '';
             
+            const address = item.address || 'Address not available';
+            
             itineraryHTML += `
                 <div class="timeline-item">
-                    <div class="timeline-marker">${emoji}</div>
+                    <div class="timeline-marker"><img src="${imageUrl}" alt="Activity" class="timeline-thumbnail"></div>
                     <div class="timeline-content">
                         <div class="timeline-time">${item.time || 'TBD'}</div>
                         <div class="timeline-name">
                             ${item.name || 'Activity'}
                             ${relevanceBadge}
                         </div>
+                        <div class="timeline-address">📍 ${address}</div>
                         <div class="timeline-details">
                             <span>⏱️ ${item.duration || 'N/A'}</span>
                             <span>💰 ${item.cost || 'Free'}</span>
@@ -1067,23 +1212,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
         document.getElementById('regenerate-btn').addEventListener('click', () => {
             currentQuestion = 0;
+            
+            // Restore navigation buttons visibility
+            if (prevBtn) prevBtn.style.display = 'inline-block';
+            if (nextBtn) nextBtn.style.display = 'inline-block';
+            
             renderQuestion();
             updateProgress();
-            prevBtn.style.display = '';
-            nextBtn.style.display = '';
         });
     }
 
-    function acceptGeneratedItinerary(result) {
+    async function acceptGeneratedItinerary(result) {
+        // Save answers before closing modal (closeModal clears the answers object)
+        const savedAnswers = { ...answers };
+        
         // Close modal
         closeModal();
 
-        // Populate the explore page fields
-        startingAddressInput.value = answers['starting-address'] || '';
-        interestsInput.value = answers['interests'] || '';
+        // Populate the explore page fields using saved answers
+        startingAddressInput.value = savedAnswers['starting-address'] || '';
+        interestsInput.value = savedAnswers['interests'] || '';
         
         // Map budget slider value (0-500) to budget slider (0-2)
-        const budgetValue = parseInt(answers['budget'] || 100);
+        const budgetValue = parseInt(savedAnswers['budget'] || 100);
         let budgetIndex = 1; // default medium
         if (budgetValue <= 150) {
             budgetIndex = 0; // low
@@ -1095,31 +1246,55 @@ document.addEventListener('DOMContentLoaded', () => {
         budgetSlider.value = budgetIndex;
         budgetLabel.textContent = budgetLabels[budgetIndex];
         
-        maxDistanceSelect.value = answers['max-distance'] || '30';
-        travelModeSelect.value = answers['travel-mode'] || 'driving-car';
+        maxDistanceSelect.value = savedAnswers['max-distance'] || '30';
+        travelModeSelect.value = savedAnswers['travel-mode'] || 'driving-car';
 
-        // Clear current itinerary
-        itineraryItems = [];
-        itineraryCardsContainer.innerHTML = '';
-
-        // Store starting coords
+        // Store starting coords and weather
         if (result.starting_coords) {
             startingCoords = result.starting_coords;
         }
-        currentTravelMode = answers['travel-mode'] || 'driving-car';
+        currentTravelMode = savedAnswers['travel-mode'] || 'driving-car';
+        
+        // Display weather widget
+        displayWeatherWidget(result.weather);
 
-        // Add all items to the itinerary
+        // Clear current itinerary before adding AI-generated items
+        itineraryItems = [];
+        itineraryCardsContainer.innerHTML = '';
+
+        // Add all AI-generated items to the itinerary sidebar
         const generatedItems = result.itinerary || [];
         generatedItems.forEach(item => {
             itineraryItems.push(item);
             createItineraryCard(item);
         });
 
-        // Update routing and totals
-        updateItineraryRouting();
+        // Calculate routing for visual feedback on individual legs
+        await updateItineraryRouting();
+        
+        // Use pre-calculated totals from backend (AI already calculated these accurately)
+        // Set these AFTER updateItineraryRouting to ensure they don't get overwritten
+        const totalCostEl = document.getElementById('total-cost');
+        const totalTimeEl = document.getElementById('total-time');
+        
+        if (totalCostEl && result.total_cost !== undefined) {
+            totalCostEl.textContent = `$${result.total_cost.toFixed(2)}`;
+        }
+        
+        if (totalTimeEl && result.total_time_hours !== undefined) {
+            const totalHours = result.total_time_hours;
+            const hours = Math.floor(totalHours);
+            const minutes = Math.round((totalHours % 1) * 60);
+            totalTimeEl.textContent = `${hours} hr ${minutes} min`;
+        }
+
+        // Use pre-loaded activities to instantly display activity cards
+        // (These were loaded in parallel with AI generation)
+        preloadedActivities = result.all_activities || [];
+        await handleSearch(true);
 
         // Show success message
-        alert('✅ Itinerary loaded! Scroll down to view your complete trip plan.');
+        alert('✅ Itinerary loaded! You can now browse additional activities below and edit your itinerary.');
     }
 
     // Event Listeners
