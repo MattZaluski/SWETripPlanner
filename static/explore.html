@@ -18,6 +18,7 @@
                 <a href="#" class="nav-link">Saved Trips</a>
             </nav>
             <div class="header-actions">
+                <button id="guided-setup-btn" class="btn-guided">Guided Setup</button>
                 <button class="btn-secondary">LOG IN</button>
                 <button class="btn-primary">SIGN UP</button>
             </div>
@@ -160,16 +161,35 @@
                 </div>
                 
                 <div class="itinerary-actions">
-                    <div class="itinerary-name-input">
-                        <input type="text" id="itinerary-name" placeholder="Name It..." class="name-input">
-                        <span class="calendar-icon">📅</span>
-                    </div>
                     <button class="save-btn" disabled>Save</button>
                     <button class="share-btn" disabled>Share</button>
                 </div>
             </div>
         </div>
     </main>
+
+    <!-- Guided Setup Modal -->
+    <div id="guided-modal" class="modal">
+        <div class="modal-content">
+            <button class="modal-close" id="modal-close">&times;</button>
+            
+            <div class="progress-bar-container">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <div class="progress-text" id="progress-text">Question 1 of 5</div>
+            </div>
+
+            <div class="question-container" id="question-container">
+                <!-- Questions will be dynamically inserted here -->
+            </div>
+
+            <div class="navigation-buttons">
+                <button id="prev-btn" class="nav-btn secondary-btn" disabled>Previous</button>
+                <button id="next-btn" class="nav-btn primary-btn">Next</button>
+            </div>
+        </div>
+    </div>
 
     <script src="/static/explore.js"></script>
 </body>

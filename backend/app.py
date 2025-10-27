@@ -1,7 +1,7 @@
 import os
 from flask import Flask, request, jsonify, send_from_directory
 from dotenv import load_dotenv
-from services import plan_trip, calculate_route
+from services import plan_trip, plan_trip_smart, calculate_route
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
@@ -22,6 +22,32 @@ def api_plan():
         return jsonify({"error": "missing starting_address"}), 400
     try:
         result = plan_trip(data)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/plan-smart", methods=["POST"])
+def api_plan_smart():
+    """
+    Smart trip planning with time-based scheduling and AI-generated durations.
+    Expects JSON body with:
+    - starting_address: string
+    - interests: array of strings
+    - budget: string (low/medium/high)
+    - max_distance: number (miles)
+    - travel_mode: string (driving-car, cycling-regular, foot-walking)
+    - start_time: string (HH:MM format, e.g. "09:00")
+    - end_time: string (HH:MM format, e.g. "17:00")
+    """
+    data = request.get_json()
+    if not data or "starting_address" not in data:
+        return jsonify({"error": "missing starting_address"}), 400
+    
+    if "start_time" not in data or "end_time" not in data:
+        return jsonify({"error": "missing start_time or end_time"}), 400
+    
+    try:
+        result = plan_trip_smart(data)
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
