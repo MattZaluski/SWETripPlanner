@@ -1,4 +1,3 @@
-3# services.py
 import os
 import json
 import requests
@@ -156,6 +155,119 @@ def fetch_places_from_geoapify(lat, lng, interests, max_distance, budget):
 
     return places
 
+def calculate_route(waypoints, travel_mode):
+    """
+    Calculate routing data between multiple waypoints using Geoapify Routing API.
+    
+    Args:
+        waypoints: List of (lat, lng) tuples representing waypoints in order
+        travel_mode: One of 'drive', 'bicycle', 'walk' (Geoapify format)
+        
+    Returns:
+        Dictionary with route information including:
+        - total_distance_km: Total distance in kilometers
+        - total_time_min: Total time in minutes
+        - legs: List of leg data (distance and time for each segment)
+    """
+    if not GEOAPIFY_KEY:
+        raise Exception("GEOAPIFY_API_KEY not set in .env")
+    
+    if len(waypoints) < 2:
+        return {
+            "total_distance_km": 0,
+            "total_time_min": 0,
+            "legs": []
+        }
+    
+    # Convert travel mode from our format to Geoapify format
+    mode_mapping = {
+        "driving-car": "drive",
+        "cycling-regular": "bicycle",
+        "foot-walking": "walk"
+    }
+    geoapify_mode = mode_mapping.get(travel_mode, "drive")
+    
+    # Format waypoints as lat,lng|lat,lng|...
+    waypoints_str = "|".join([f"{lat},{lng}" for lat, lng in waypoints])
+    
+    url = "https://api.geoapify.com/v1/routing"
+    params = {
+        "waypoints": waypoints_str,
+        "mode": geoapify_mode,
+        "apiKey": GEOAPIFY_KEY
+    }
+    
+    try:
+        r = requests.get(url, params=params, timeout=15)
+        if not r.ok:
+            raise Exception(f"Geoapify Routing API error: {r.status_code} {r.text}")
+        
+        data = r.json()
+        
+        # Extract route information
+        features = data.get("features", [])
+        if not features:
+            raise Exception("No route found")
+        
+        properties = features[0].get("properties", {})
+        
+        # Get total distance (in meters) and time (in seconds)
+        total_distance_m = properties.get("distance", 0)
+        total_time_s = properties.get("time", 0)
+        
+        # Convert to km and minutes
+        total_distance_km = total_distance_m / 1000
+        total_time_min = total_time_s / 60
+        
+        # Extract leg information
+        legs = []
+        legs_data = properties.get("legs", [])
+        for leg in legs_data:
+            leg_distance_m = leg.get("distance", 0)
+            leg_time_s = leg.get("time", 0)
+            legs.append({
+                "distance_km": leg_distance_m / 1000,
+                "time_min": leg_time_s / 60
+            })
+        
+        return {
+            "total_distance_km": round(total_distance_km, 2),
+            "total_time_min": round(total_time_min, 1),
+            "legs": legs
+        }
+    
+    except Exception as e:
+        print(f"Routing error: {e}")
+        # Return fallback data
+        return {
+            "total_distance_km": 0,
+            "total_time_min": 0,
+            "legs": []
+        }
+
+def calculate_travel_time_from_start(start_lat, start_lng, places, travel_mode):
+    """
+    Calculate travel time and distance from starting point to each place.
+    Updates each place dict with travel_time_min and distance_km.
+    """
+    if not places:
+        return places
+    
+    for place in places:
+        if place.get("lat") is None or place.get("lng") is None:
+            place["travel_time_min"] = 0
+            place["distance_km"] = 0
+            continue
+        
+        # Calculate route from start to this place
+        waypoints = [(start_lat, start_lng), (place["lat"], place["lng"])]
+        route_data = calculate_route(waypoints, travel_mode)
+        
+        place["travel_time_min"] = round(route_data["total_time_min"])
+        place["distance_km"] = route_data["total_distance_km"]
+    
+    return places
+
 # ---------------- existing LLM code ----------------
 
 def call_llm(prefs, places, weather, travel_times):
@@ -165,6 +277,7 @@ def call_llm(prefs, places, weather, travel_times):
     Weather: {weather}
     Travel times (in minutes): {travel_times}
     Generate a polished day trip itinerary: Rank and filter places based on interests, budget, weather (prefer indoor if rainy), and travel times. Create a sequential list starting at 9AM, with 1-2 hours per stop, reasons for each, and estimates for time/cost.
+    Generate 10-12 activities/places for a full day itinerary, creating multiple options for different times of day.
     Output as a JSON list of objects, where each object has 'time', 'name', 'reason', 'cost', and 'travel_time_min' fields.
     Example: [
         {{"time": "9:00 AM", "name": "Place Name", "reason": "Why this fits", "cost": "low", "travel_time_min": 10}}
@@ -205,12 +318,27 @@ def plan_trip(data):
             max_distance=prefs["max_distance"],
             budget=prefs["budget"]
         )
-        # TODO: swap in real weather and travel time APIs as needed
+        
+        # Calculate travel times from starting point to each place
+        places = calculate_travel_time_from_start(lat, lng, places, prefs["travel_mode"])
+        
+        # TODO: swap in real weather API as needed
         weather = MOCK_WEATHER
-        travel_times = {place['id']: 10 for place in places}  # dummy travel times for now
+        travel_times = {place['id']: place.get('travel_time_min', 10) for place in places}
+    
     polished_itinerary = call_llm(prefs, places, weather, travel_times)
+    
+    # Add lat/lng and distance info to itinerary items by matching names
+    for item in polished_itinerary:
+        matching_place = next((p for p in places if p['name'] == item['name']), None)
+        if matching_place:
+            item['lat'] = matching_place.get('lat')
+            item['lng'] = matching_place.get('lng')
+            item['distance_km'] = matching_place.get('distance_km', 0)
+    
     return {
         "itinerary": polished_itinerary,
         "weather": weather,
-        "places": places
+        "places": places,
+        "starting_coords": {"lat": lat, "lng": lng} if not MOCK else {"lat": 42.36, "lng": -71.06}
     }

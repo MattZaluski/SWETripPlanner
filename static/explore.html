@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Explore - Geo Guide</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/explore.css">
+</head>
+<body>
+    <!-- Header/Navigation -->
+    <header class="main-header">
+        <div class="header-content">
+            <h1 class="logo">Geo Guide</h1>
+            <nav class="main-nav">
+                <a href="/" class="nav-link">Home</a>
+                <a href="/explore" class="nav-link active">Plan Trip</a>
+                <a href="#" class="nav-link">Saved Trips</a>
+            </nav>
+            <div class="header-actions">
+                <button class="btn-secondary">LOG IN</button>
+                <button class="btn-primary">SIGN UP</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Search Bar and Quick Filters -->
+        <section class="search-section">
+            <div class="search-container">
+                <input type="text" id="starting-address" class="search-input" placeholder="City, State or Address">
+                <select id="max-distance" class="filter-select" title="Maximum distance to explore">
+                    <option value="10">Within 10 miles</option>
+                    <option value="30" selected>Within 30 miles</option>
+                    <option value="50">Within 50 miles</option>
+                    <option value="100">Within 100 miles</option>
+                </select>
+                <button type="button" class="search-btn" id="search-btn">🔍 Search</button>
+            </div>
+            
+            <!-- Secondary Filters -->
+            <div class="secondary-filters">
+                <div class="interests-wrapper">
+                    <input type="text" id="interests" class="filter-input" placeholder="What interests you? (type or choose from suggestions)" list="interests-suggestions">
+                    <datalist id="interests-suggestions">
+                        <option value="museums">
+                        <option value="food">
+                        <option value="restaurants">
+                        <option value="parks">
+                        <option value="shopping">
+                        <option value="art">
+                        <option value="music">
+                        <option value="history">
+                        <option value="architecture">
+                        <option value="nature">
+                        <option value="beaches">
+                        <option value="hiking">
+                        <option value="nightlife">
+                        <option value="sports">
+                        <option value="entertainment">
+                        <option value="cafes">
+                        <option value="theaters">
+                        <option value="galleries">
+                    </datalist>
+                    <small class="helper-text">💡 Try clicking for suggestions</small>
+                </div>
+                <div class="budget-filter">
+                    <label for="budget">💰 Budget:</label>
+                    <input type="range" id="budget" min="0" max="2" value="0" class="budget-slider" title="Adjust your budget level">
+                    <span class="budget-label">Low</span>
+                </div>
+                <select id="travel-mode" class="filter-select" title="How will you be traveling?">
+                    <option value="driving-car">🚗 Car</option>
+                    <option value="cycling-regular" selected>🚴 Bicycle</option>
+                    <option value="foot-walking">🚶 Walking</option>
+                </select>
+            </div>
+        </section>
+
+        <!-- Content Area -->
+        <div class="content-wrapper">
+            <!-- Left Sidebar -->
+            <aside class="sidebar">
+                <h3 class="filter-section-title">Activity Filters</h3>
+                <div class="filter-group">
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="activity-filter" value="Family Friendly">
+                        <span>Family Friendly</span>
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="activity-filter" value="Outdoors">
+                        <span>Outdoors</span>
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="activity-filter" value="Food">
+                        <span>Food</span>
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="activity-filter" value="Solo travel">
+                        <span>Solo travel</span>
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="activity-filter" value="Arts & Culture">
+                        <span>Arts & Culture</span>
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="activity-filter" value="Shopping">
+                        <span>Shopping</span>
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="activity-filter" value="Wheelchair accessible">
+                        <span>Wheelchair accessible</span>
+                    </label>
+                    <a href="#" class="more-link">+ More</a>
+                </div>
+
+                <h3 class="filter-section-title">Weather Filters</h3>
+                <div class="filter-group">
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="weather-filter" value="clear">
+                        <span>Clear Skies</span>
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="weather-filter" value="rainy">
+                        <span>Rain Protection</span>
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="weather-filter" value="sunny">
+                        <span>Sunny Weather</span>
+                    </label>
+                </div>
+            </aside>
+
+            <!-- Activity Cards Grid -->
+            <section class="cards-section">
+                <div id="loading" class="loading-message" style="display: none;">Loading activities...</div>
+                <div id="cards-container" class="cards-grid">
+                    <!-- Cards will be dynamically inserted here -->
+                </div>
+                <div class="load-more-container">
+                    <button id="load-more-btn" class="load-more-btn" style="display: none;">Load More Activities</button>
+                </div>
+            </section>
+        </div>
+        
+        <!-- Your Itinerary Section (Page Bottom) -->
+        <div class="itinerary-container" id="itinerary-container">
+            <div class="itinerary-content">
+                <div class="itinerary-header">
+                    <h2>Your Itinerary</h2>
+                    <div class="itinerary-summary">
+                        <span class="summary-stat">Total Cost: <span id="total-cost">$0.00</span></span>
+                        <span class="summary-stat">Expected Total Time: <span id="total-time">0 hr 0 min</span></span>
+                    </div>
+                </div>
+                
+                <div class="itinerary-cards-container" id="itinerary-cards">
+                    <p class="empty-itinerary-message">Add activities to your itinerary</p>
+                </div>
+                
+                <div class="itinerary-actions">
+                    <div class="itinerary-name-input">
+                        <input type="text" id="itinerary-name" placeholder="Name It..." class="name-input">
+                        <span class="calendar-icon">📅</span>
+                    </div>
+                    <button class="save-btn" disabled>Save</button>
+                    <button class="share-btn" disabled>Share</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/explore.js"></script>
+</body>
+</html>
+
