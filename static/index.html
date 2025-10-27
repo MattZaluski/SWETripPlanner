@@ -9,6 +9,7 @@
 <body>
     <header>
         <h1>Trip Planner API & LLM Integration Test</h1>
+        <button id="guided-setup-btn" class="guided-setup-btn">Guided Setup</button>
     </header>
 
     <main>
@@ -52,6 +53,29 @@
     <footer>
         <p>&copy; 2025 LLM Trip Planner</p>
     </footer>
+
+    <!-- Guided Setup Modal -->
+    <div id="guided-modal" class="modal">
+        <div class="modal-content">
+            <button class="modal-close" id="modal-close">&times;</button>
+            
+            <div class="progress-bar-container">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <div class="progress-text" id="progress-text">Question 1 of 5</div>
+            </div>
+
+            <div class="question-container" id="question-container">
+                <!-- Questions will be dynamically inserted here -->
+            </div>
+
+            <div class="navigation-buttons">
+                <button id="prev-btn" class="nav-btn secondary-btn" disabled>Previous</button>
+                <button id="next-btn" class="nav-btn primary-btn">Next</button>
+            </div>
+        </div>
+    </div>
 
     <script src="/static/app.js"></script>
 </body>
