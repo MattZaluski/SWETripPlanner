@@ -3,6 +3,10 @@ import json
 import requests
 import time
 import hashlib
+from datetime import datetime, timedelta
+import secrets
+from bson import ObjectId
+from pymongo import MongoClient
 from dotenv import load_dotenv
 from openai import OpenAI
 import google.generativeai as genai
@@ -73,6 +77,12 @@ load_dotenv()
 MOCK = os.getenv("MOCK", "true").lower() == "true"
 GEOAPIFY_KEY = os.getenv("GEOAPIFY_API_KEY")
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
+# MongoDB Configuration
+MONGO_URI = os.getenv("MONGO_URI")
+mongo = MongoClient(MONGO_URI)
+db = mongo["Geo_Guide"]
+users_col = db["users"]
 
 # Configure Gemini
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'AIzaSyDW7M2_HtcbiA3FaOy1waVpqrmCl9CUXWY')
@@ -1045,3 +1055,66 @@ def plan_trip_smart(data):
         "total_activity_hours": round(total_activity_hours, 2),
         "total_travel_hours": round(total_travel_minutes / 60, 2)
     }
+
+#=====================================================
+#                  USER AUTHENTICATION
+# =====================================================
+
+def register_user(first_name, last_name, email, password):
+    if users_col.find_one({"email": email}):
+        return {"error": "Email already exists"}
+
+    hashed_pw = hashlib.sha256(password.encode()).hexdigest()
+    verification_token = secrets.token_hex(16)
+
+    users_col.insert_one({
+        "First_Name": first_name,
+        "Last_Name": last_name,
+        "email": email,
+        "password_hash": hashed_pw,
+        "verified": False,
+        "verification_token": verification_token,
+        "session_token": None,
+        "csrf_token": None,
+        "session_expires": None,
+        "created_at": datetime.utcnow()
+    })
+
+    return {"success": True, "verification_token": verification_token}
+
+
+def login_user(email, password):
+    user = users_col.find_one({"email": email})
+    if not user:
+        return {"error": "User not found"}
+
+    if hashlib.sha256(password.encode()).hexdigest() != user["password_hash"]:
+        return {"error": "Invalid password"}
+
+    session_token = secrets.token_hex(16)
+    csrf_token = secrets.token_hex(8)
+    expires_at = datetime.utcnow() + timedelta(minutes=30)  # Expire in 30 minutes
+
+    users_col.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"session_token": session_token, "csrf_token": csrf_token, "session_expires": expires_at}}
+    )
+
+    return {"success": True, "session_token": session_token, "csrf_token": csrf_token, "user_id": str(user["_id"])}
+
+
+def logout_user(session_token):
+    user = users_col.find_one({"session_token": session_token})
+    if not user:
+        return {"error": "Invalid session"}
+
+    users_col.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"session_token": None, "csrf_token": None, "session_expires": None}}
+    )
+
+    return {"success": True}
+
+def get_user_by_session_token(session_token):
+    user = users_col.find_one({"session_token": session_token})
+    return user

@@ -5,11 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trip Planner API and LLM Integration Test</title>
     <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/explore.css">
 </head>
 <body>
-    <header>
-        <h1>Trip Planner API & LLM Integration Test</h1>
-        <button id="guided-setup-btn" class="guided-setup-btn">Guided Setup</button>
+    <!-- Header/Navigation -->
+    <header class="main-header">
+        <div class="header-content">
+            <img src="/static/images/logothing.png" alt="Geo Guide" class="logo">
+            <nav class="main-nav">
+                <a href="/" class="nav-link active">Home</a>
+                <a href="/explore" class="nav-link">Plan Trip</a>
+                <a href="#" class="nav-link">Saved Trips</a>
+            </nav>
+            <div class="header-actions">
+                <button id="guided-setup-btn" class="btn-guided">Guided Setup</button>
+                <button class="btn-secondary"
+                        onclick="window.location.href='/login';">LOG IN</button>
+                <button class="btn-primary" 
+                    onclick="window.location.href='/register';">SIGN UP</button>
+            </div>
+        </div>
     </header>
 
     <main>

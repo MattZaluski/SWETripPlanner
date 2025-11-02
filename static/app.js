@@ -303,4 +303,36 @@ document.addEventListener('DOMContentLoaded', () => {
             closeModal();
         }
     });
+
+    const headerActions = document.querySelector('.header-actions');
+
+    function updateHeaderUI() {
+        const token = localStorage.getItem('session_token');
+        if (token) {
+            headerActions.innerHTML = `
+                <span>Welcome!</span>
+                <button id="logout-btn" class="btn-secondary">LOG OUT</button>
+            `;
+            document.getElementById('logout-btn').addEventListener('click', async () => {
+                await fetch('/api/logout-user', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({session_token: token})
+                });
+                localStorage.removeItem('session_token');
+                localStorage.removeItem('csrf_token');
+                updateHeaderUI();
+            });
+        } else {
+            headerActions.innerHTML = `
+                <button id="guided-setup-btn" class="btn-guided">Guided Setup</button>
+                <button class="btn-secondary"
+                        onclick="window.location.href='/login';">LOG IN</button>
+                <button class="btn-primary" 
+                    onclick="window.location.href='/register';">SIGN UP</button>
+            `;
+        }
+    }
+
+    updateHeaderUI();
 });

@@ -13,14 +13,16 @@
         <div class="header-content">
             <img src="/static/images/logothing.png" alt="Geo Guide" class="logo">
             <nav class="main-nav">
-                <a href="/" class="nav-link">Home</a>
-                <a href="/explore" class="nav-link active">Plan Trip</a>
+                <a href="/" class="nav-link active">Home</a>
+                <a href="/explore" class="nav-link">Plan Trip</a>
                 <a href="#" class="nav-link">Saved Trips</a>
             </nav>
             <div class="header-actions">
                 <button id="guided-setup-btn" class="btn-guided">Guided Setup</button>
-                <button class="btn-secondary">LOG IN</button>
-                <button class="btn-primary">SIGN UP</button>
+                <button class="btn-secondary"
+                        onclick="window.location.href='/login';">LOG IN</button>
+                <button class="btn-primary" 
+                    onclick="window.location.href='/register';">SIGN UP</button>
             </div>
         </div>
     </header>

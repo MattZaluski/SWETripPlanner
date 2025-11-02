@@ -84,7 +84,10 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/plan', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + localStorage.getItem('session_token')
+                },
                 body: JSON.stringify({
                     starting_address: startingAddress,
                     interests: interests,
@@ -227,7 +230,10 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const response = await fetch('/api/plan', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + localStorage.getItem('session_token')
+                },
                 body: JSON.stringify({
                     starting_address: startingAddress,
                     interests: interests,
@@ -458,7 +464,10 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/calculate-route', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + localStorage.getItem('session_token')
+                },
                 body: JSON.stringify({
                     waypoints: waypoints,
                     travel_mode: currentTravelMode
@@ -1104,7 +1113,10 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/plan-smart', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + localStorage.getItem('session_token')
+                },
                 body: JSON.stringify({
                     starting_address: answers['starting-address'] || '',
                     interests: interests,
@@ -1329,4 +1341,36 @@ document.addEventListener('DOMContentLoaded', () => {
             closeModal();
         }
     });
+
+    const headerActions = document.querySelector('.header-actions');
+
+    function updateHeaderUI() {
+        const token = localStorage.getItem('session_token');
+        if (token) {
+            headerActions.innerHTML = `
+                <span>Welcome!</span>
+                <button id="logout-btn" class="btn-secondary">LOG OUT</button>
+            `;
+            document.getElementById('logout-btn').addEventListener('click', async () => {
+                await fetch('/api/logout-user', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({session_token: token})
+                });
+                localStorage.removeItem('session_token');
+                localStorage.removeItem('csrf_token');
+                updateHeaderUI();
+            });
+        } else {
+            headerActions.innerHTML = `
+                <button id="guided-setup-btn" class="btn-guided">Guided Setup</button>
+                <button class="btn-secondary"
+                        onclick="window.location.href='/login';">LOG IN</button>
+                <button class="btn-primary" 
+                    onclick="window.location.href='/register';">SIGN UP</button>
+            `;
+        }
+    }
+
+    updateHeaderUI();
 });
