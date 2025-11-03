@@ -2,16 +2,40 @@ import os
 import uuid
 import threading
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, g
 from dotenv import load_dotenv
+from functools import wraps
 from services import (
     plan_trip, plan_trip_smart, calculate_route,
-    geocoding_cache, weather_cache, places_cache, llm_scoring_cache, routing_cache
+    geocoding_cache, weather_cache, places_cache, llm_scoring_cache, routing_cache,
+    register_user, login_user, logout_user, get_user_by_session_token
 )
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 app = Flask(__name__, static_folder="../static", static_url_path="/static")
+
+# Provided a simple rout protection overlay 
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.lower().startswith("bearer "):
+            return jsonify({"error": "Authorization header missing or invalid"}), 401
+
+        session_token = auth_header[7:]
+        user = get_user_by_session_token(session_token)
+        if not user or 'session_expires' not in user:
+            return jsonify({"error": "Invalid or expired session token"}), 401
+
+        if user['session_expires'] < datetime.utcnow():
+            # Session expired, log the user out
+            logout_user(session_token)
+            return jsonify({"error": "Session expired"}), 401
+
+        g.current_user = user
+        return f(*args, **kwargs)
+    return decorated
 
 # In-memory cache for paginated search results
 # Structure: {session_id: {'results': [...], 'weather': {...}, 'starting_coords': {...}, 'expires': datetime}}
@@ -25,7 +49,16 @@ def index():
 def explore():
     return send_from_directory("../static", "explore.html")
 
+@app.route("/login")
+def login_page():
+    return send_from_directory("../static", "login.html")
+
+@app.route("/register")
+def register_page():
+    return send_from_directory("../static", "register.html")
+
 @app.route("/api/plan", methods=["POST"])
+@login_required
 def api_plan():
     """
     Plan trip with pagination support.
@@ -102,6 +135,7 @@ def api_plan():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/plan-smart", methods=["POST"])
+@login_required
 def api_plan_smart():
     """
     Smart trip planning with time-based scheduling and AI-generated durations.
@@ -128,6 +162,7 @@ def api_plan_smart():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/calculate-route", methods=["POST"])
+@login_required
 def api_calculate_route():
     """
     Calculate routing for a sequence of activities in an itinerary.
@@ -192,6 +227,52 @@ def api_clear_cache():
         return jsonify({"message": "All caches cleared successfully"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+@app.route("/api/register-user", methods=["POST"])
+def api_register_user():
+    data = request.get_json()
+    if not data or not all(k in data for k in ("first_name", "last_name", "email", "password")):
+        return jsonify({"error": "missing required fields"}), 400
+    
+    result = register_user(
+        first_name=data["first_name"],
+        last_name=data["last_name"],
+        email=data["email"],
+        password=data["password"]
+    )
+    if "error" in result:
+        return jsonify(result), 400
+    return jsonify(result)
+
+@app.route("/api/login-user", methods=["POST"])
+def api_login_user():
+    data = request.get_json()
+    if not data or not all(k in data for k in ("email", "password")):
+        return jsonify({"error": "missing email or password"}), 400
+
+    result = login_user(data["email"], data["password"])
+    if "error" in result:
+        return jsonify(result), 400
+    return jsonify(result)
+
+@app.route("/api/logout-user", methods=["POST"])
+def api_logout_user():
+    data = request.get_json()
+    if not data or "session_token" not in data:
+        return jsonify({"error": "missing session_token"}), 400
+
+    result = logout_user(data["session_token"])
+    if "error" in result:
+        return jsonify(result), 400
+    return jsonify(result)
+
+@app.route('/api/protected')
+@login_required
+def protected():
+    user = g.current_user  # The full user dict from MongoDB
+    return jsonify({
+        "message": f"Hello {user.get('First_Name', 'user')}! This is protected data."
+    })
 
 def cleanup_expired_cache():
     """Clean up expired entries from search results cache."""

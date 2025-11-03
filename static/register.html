@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>GeeGuide - Login</title>
+        <link rel="stylesheet" href="/static/styles.css">
+        <link rel="stylesheet" href="/static/explore.css">
+    </head>
+    <body>
+        <!-- Header/Navigation -->
+        <header class="main-header">
+            <div class="header-content">
+                <img src="/static/images/logothing.png" alt="Geo Guide" class="logo">
+                <nav class="main-nav">
+                    <a href="/" class="nav-link">Home</a>
+                    <a href="/explore" class="nav-link">Plan Trip</a>
+                    <a href="#" class="nav-link">Saved Trips</a>
+                </nav>
+                <div class="header-actions">
+                    <button id="guided-setup-btn" class="btn-guided">Guided Setup</button>
+                    <button class="btn-secondary"
+                            onclick="window.location.href='/login';">LOG IN</button>
+                    <button class="btn-primary" 
+                        onclick="window.location.href='/register';">SIGN UP</button>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <h1>Create an Account</h1>
+            <form id="register-form">
+                <label for="first_name">First Name</label><br>
+                <input type="text" id="first_name" name="first_name" required><br><br>
+
+                <label for="last_name">Last Name</label><br>
+                <input type="text" id="last_name" name="last_name" required><br><br>
+
+                <label for="email">Email</label><br>
+                <input type="email" id="email" name="email" required><br><br>
+
+                <label for="password">Password</label><br>
+                <input type="password" id="password" name="password" required><br><br>
+
+                <button type="submit" class="btn-primary">Register</button>
+            </form>
+
+            <p id="message" style="color:red;"></p>
+        </main>
+        <script src="/static/register.js"></script>
+    </body>
+</html>

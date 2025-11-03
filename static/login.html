@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>GeeGuide - Login</title>
+        <link rel="stylesheet" href="/static/styles.css">
+        <link rel="stylesheet" href="/static/explore.css">
+    </head>
+    <body>
+        <!-- Header/Navigation -->
+        <header class="main-header">
+            <div class="header-content">
+                <img src="/static/images/logothing.png" alt="Geo Guide" class="logo">
+                <nav class="main-nav">
+                    <a href="/" class="nav-link">Home</a>
+                    <a href="/explore" class="nav-link">Plan Trip</a>
+                    <a href="#" class="nav-link">Saved Trips</a>
+                </nav>
+                <div class="header-actions">
+                    <button id="guided-setup-btn" class="btn-guided">Guided Setup</button>
+                    <button class="btn-secondary"
+                            onclick="window.location.href='/login';">LOG IN</button>
+                    <button class="btn-primary" 
+                        onclick="window.location.href='/register';">SIGN UP</button>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <form id="login-form">
+                <label for="email">Email:</label>
+                <input type="email" id="email" name="email" required>
+                
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+                
+                <button type="submit" class="btn-primary">Log In</button>
+            </form>
+            <p id="message" style="color:red;"></p>
+        </main>
+        <script src="/static/login.js"></script>
+    </body>
+</html>
