@@ -5,6 +5,8 @@
         <title>GeeGuide - Login</title>
         <link rel="stylesheet" href="/static/styles.css">
         <link rel="stylesheet" href="/static/explore.css">
+        <link rel="stylesheet" href="/static/saved.css">
+        <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     </head>
     <body>
         <!-- Header/Navigation -->
@@ -26,26 +28,17 @@
             </div>
         </header>
 
-        <main>
-            <h1>Create an Account</h1>
-            <form id="register-form">
-                <label for="first_name">First Name</label><br>
-                <input type="text" id="first_name" name="first_name" required><br><br>
+        <main class="main-content">
+            <section class="saved-trips-section">
+                <h2>Your Saved Trips</h2>
 
-                <label for="last_name">Last Name</label><br>
-                <input type="text" id="last_name" name="last_name" required><br><br>
-
-                <label for="email">Email</label><br>
-                <input type="email" id="email" name="email" required><br><br>
-
-                <label for="password">Password</label><br>
-                <input type="password" id="password" name="password" required><br><br>
-
-                <button type="submit" class="btn-primary">Register</button>
-            </form>
-
-            <p id="message" style="color:red;"></p>
+                <div class="saved-trips-grid">
+                    
+                </div>
+            </section>
         </main>
-        <script src="/static/register.js"></script>
+
+
+        <script src="/static/saved.js"></script>
     </body>
 </html>

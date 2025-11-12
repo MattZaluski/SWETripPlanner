@@ -311,6 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (token) {
             headerActions.innerHTML = `
                 <span>Welcome!</span>
+                <button id="guided-setup-btn" class="btn-guided">Guided Setup</button>
                 <button id="logout-btn" class="btn-secondary">LOG OUT</button>
             `;
             document.getElementById('logout-btn').addEventListener('click', async () => {
