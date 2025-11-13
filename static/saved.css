@@ -1,0 +1,163 @@
+/* GENERAL LAYOUT */
+body {
+  background: #F5F2EC;
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  color: #2b2b2b;
+  margin: 0;
+  padding: 0;
+}
+
+/* BUTTONS */
+.btn-small {
+  font-size: 0.8rem;
+  background: #C27D61;
+  border: none;
+  border-radius: 6px;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.btn-small:hover {
+  background: #E3D3CC;
+}
+
+/* SECTION TITLE */
+.saved-trips-section {
+  width: 100%;
+  max-width: 1200px;
+  margin: 2rem auto;
+  padding: 0 1.5rem;
+}
+
+.saved-trips-section h2 {
+  font-weight: 600;
+  font-size: 1.6rem;
+  color: #4b392b;
+  margin-bottom: 1rem;
+}
+
+/* GRID LAYOUT */
+.saved-trips-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 2rem;
+  justify-items: center;
+  align-items: start;
+}
+
+/* CARD BASE */
+.trip-card {
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 350px;
+  transition: transform 0.2s ease, box-shadow 0.3s ease;
+}
+
+.trip-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+
+/* IMAGE */
+.card-image {
+  position: relative;
+}
+
+.card-thumbnail {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+}
+
+/* RELEVANCE BADGE */
+.relevance-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: #b77b4b;
+  color: #fff;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  border-radius: 8px;
+  opacity: 0.9;
+}
+
+/* BODY */
+.card-body {
+  padding: 1rem 1.25rem;
+}
+
+.card-title {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #3e2c1d;
+  margin-bottom: 0.4rem;
+}
+
+.card-address {
+  font-size: 0.9rem;
+  color: #7a6a5b;
+}
+
+.weather-warning {
+  font-size: 0.85rem;
+  color: #b65a4a;
+  margin-top: 0.4rem;
+}
+
+.card-description {
+  margin-top: 0.6rem;
+  font-size: 0.9rem;
+  color: #5a5147;
+  line-height: 1.4;
+}
+
+/* FOOTER */
+.card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid #f0edea;
+  padding: 0.8rem 1.25rem;
+  font-size: 0.85rem;
+  color: #5b4636;
+}
+
+.card-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.card-time {
+  font-size: 0.8rem;
+  color: #8a7b6c;
+}
+
+/* ADD NEW CARD */
+.trip-card.add-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed #d8c8b8;
+  box-shadow: none;
+  background: #faf8f5;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.trip-card.add-new:hover {
+  background: #f1ebe5;
+  border-color: #b77b4b;
+}
+
+.add-icon {
+  font-size: 2.5rem;
+  color: #b77b4b;
+  margin-bottom: 0.3rem;
+}

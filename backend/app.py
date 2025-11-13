@@ -8,7 +8,8 @@ from functools import wraps
 from services import (
     plan_trip, plan_trip_smart, calculate_route,
     geocoding_cache, weather_cache, places_cache, llm_scoring_cache, routing_cache,
-    register_user, login_user, logout_user, get_user_by_session_token
+    register_user, login_user, logout_user, get_user_by_session_token,
+    save_itinerary_service, get_trips
 )
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
@@ -26,12 +27,12 @@ def login_required(f):
         session_token = auth_header[7:]
         user = get_user_by_session_token(session_token)
         if not user or 'session_expires' not in user:
-            return jsonify({"error": "Invalid or expired session token"}), 401
+            return jsonify({"error": "Login to Use feature"}), 401
 
         if user['session_expires'] < datetime.utcnow():
             # Session expired, log the user out
             logout_user(session_token)
-            return jsonify({"error": "Session expired"}), 401
+            return jsonify({"error": "Session Expired Please Logout"}), 401
 
         g.current_user = user
         return f(*args, **kwargs)
@@ -49,6 +50,10 @@ def index():
 def explore():
     return send_from_directory("../static", "explore.html")
 
+@app.route("/saved")
+def saved():
+    return send_from_directory("../static", "saved.html")
+
 @app.route("/login")
 def login_page():
     return send_from_directory("../static", "login.html")
@@ -58,7 +63,6 @@ def register_page():
     return send_from_directory("../static", "register.html")
 
 @app.route("/api/plan", methods=["POST"])
-@login_required
 def api_plan():
     """
     Plan trip with pagination support.
@@ -135,7 +139,6 @@ def api_plan():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/plan-smart", methods=["POST"])
-@login_required
 def api_plan_smart():
     """
     Smart trip planning with time-based scheduling and AI-generated durations.
@@ -266,6 +269,37 @@ def api_logout_user():
         return jsonify(result), 400
     return jsonify(result)
 
+@app.route('/save-itinerary', methods=['POST'])
+@login_required
+def save_itinerary():
+    """
+    Save the current itinerary for the logged-in user.
+    Expects JSON body:
+    - starting_address: string
+    - places: array of place objects
+    - budget: string
+    - interests: array of strings
+    - travel_mode: string
+    - max_distance: number
+    """
+    data = request.get_json()
+    if not data or "places" not in data or not data["places"]:
+        return jsonify({"error": "No activities provided"}), 400
+
+    # Add the logged-in user's ID
+    data["user_id"] = str(g.current_user["_id"])
+
+    try:
+        result = save_itinerary_service(data)  # calls your service to save to DB
+        return jsonify({
+            "success": True,
+            "trip_id": str(result["trip_id"]),
+            "message": "Trip saved successfully!"
+        }), 200
+    except Exception as e:
+        print("Error saving trip:", e)
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/protected')
 @login_required
 def protected():
@@ -273,6 +307,18 @@ def protected():
     return jsonify({
         "message": f"Hello {user.get('First_Name', 'user')}! This is protected data."
     })
+
+@app.route("/api/get-trips", methods=["GET"])
+@login_required
+def api_get_trips():
+    """Return all saved trips for the current user."""
+    try:
+        user = g.current_user
+        user_id = str(user["_id"])
+        trips = get_trips(user_id)
+        return jsonify({"success": True, "trips": trips}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 def cleanup_expired_cache():
     """Clean up expired entries from search results cache."""

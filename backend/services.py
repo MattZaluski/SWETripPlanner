@@ -83,6 +83,7 @@ MONGO_URI = os.getenv("MONGO_URI")
 mongo = MongoClient(MONGO_URI)
 db = mongo["Geo_Guide"]
 users_col = db["users"]
+itinerary_col = db["saved_itineraries"]
 
 # Configure Gemini
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'AIzaSyDW7M2_HtcbiA3FaOy1waVpqrmCl9CUXWY')
@@ -1118,3 +1119,30 @@ def logout_user(session_token):
 def get_user_by_session_token(session_token):
     user = users_col.find_one({"session_token": session_token})
     return user
+
+def save_itinerary_service(data):
+    trip_doc = {
+        "user_id": data.get("user_id"),  # optional
+        "starting_address": data.get("starting_address"),
+        "places": data.get("places"),    # list of dicts with place info
+        "budget": data.get("budget"),
+        "interests": data.get("interests"),
+        "travel_mode": data.get("travel_mode"),
+        "max_distance": data.get("max_distance"),
+        "created_at": datetime.utcnow()
+    }
+    
+    result = itinerary_col.insert_one(trip_doc)
+    return {"status": "success", "trip_id": result.inserted_id}
+
+def get_trips(user_id=None):
+    query = {}
+    if user_id:
+        query["user_id"] = user_id
+        
+    trips = list(itinerary_col.find(query, {
+        "_id": 1, "starting_address": 1, "places": 1, "budget": 1, "interests": 1, "travel_mode": 1, "created_at": 1}))
+    
+    for t in trips:
+        t["_id"] = str(t["_id"])
+    return trips

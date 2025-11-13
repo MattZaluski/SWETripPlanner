@@ -1310,9 +1310,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Event Listeners
-    if (guidedSetupBtn) {
-        guidedSetupBtn.addEventListener('click', openModal);
-    }
     
     if (modalClose) {
         modalClose.addEventListener('click', closeModal);
@@ -1342,6 +1339,133 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    //saving itinerary button
+    const saveBtn = document.getElementById('save-itinerary-btn');
+
+    // Enable the save button if there are activities
+    const itineraryContainer = document.getElementById('itinerary-cards');
+    const observer = new MutationObserver(() => {
+        saveBtn.disabled = itineraryContainer.children.length === 0;
+    });
+    observer.observe(itineraryContainer, { childList: true });
+
+    // Click handler
+    saveBtn.addEventListener('click', async () => {
+        const activities = Array.from(itineraryContainer.children)
+            .filter(card => !card.classList.contains('empty-itinerary-message'))
+            .map(card => {
+                const data = JSON.parse(card.dataset.itemId);
+                return {
+                    id: data.id || null,
+                    name: data.name,
+                    cost: data.cost,
+                    duration: data.time,
+                    distance_km: data.distance_km,
+                    lat: data.lat,
+                    lng: data.lng
+                };
+            });
+
+        if (activities.length === 0) return;
+
+        try {
+            const response = await fetch('/save-itinerary', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + localStorage.getItem('session_token')
+                },
+                body: JSON.stringify({
+                    starting_address: startingAddressInput.value || null,
+                    places: activities,
+                    budget: budgetSlider?.value || null,
+                    interests: interestsInput?.value?.split(',') || [],
+                    travel_mode: travelModeSelect?.value || 'driving',
+                    max_distance: maxDistanceSelect?.value || null
+                })
+            });
+
+            const result = await response.json();
+            
+            if (result.error) {
+                alert(result.error);
+                loadingMessage.style.display = 'none';
+                return;
+            }
+
+            // Store pagination state
+            searchSessionId = result.session_id;
+            currentOffset = result.limit;
+            hasMoreResults = result.has_more;
+            
+            // Store starting coordinates
+            startingCoords = result.starting_coords;
+            
+            // Display weather widget
+            displayWeatherWidget(result.weather);
+        } catch (err) {
+            console.error(err);
+            alert('Error saving itinerary.');
+        }
+
+        
+    });
+
+    async function checkAndLoadEditTrip() {
+        const params = new URLSearchParams(window.location.search);
+        const editId = params.get('edit');
+        if (!editId) return;  // No edit param, skip loading
+
+        const token = localStorage.getItem('session_token');
+        if (!token) {
+            alert('Please log in to edit a saved trip.');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/get-trips`, {
+            headers: { "Authorization": `Bearer ${token}` }
+            });
+            const data = await response.json();
+
+            if (!data.success) throw new Error(data.error || "Failed to load trips.");
+
+            const trip = data.trips.find(t => t._id === editId);
+            if (!trip) throw new Error("Trip not found for editing.");
+
+            // Replace itinerary state with loaded trip places
+            itineraryItems = trip.places || [];
+
+            // Render search results cards reflecting current itinerary state (optional)
+            displayCards(itineraryItems, false);
+
+            // Render itinerary sidebar cards
+            itineraryCardsContainer.innerHTML = '';
+            itineraryItems.forEach(place => createItineraryCard(place));
+
+            // Populate filter and form inputs with trip data
+            startingAddressInput.value = trip.starting_address || '';
+            interestsInput.value = (trip.interests || []).join(', ');
+            maxDistanceSelect.value = trip.max_distance || 30;
+            budgetSlider.value = trip.budget || 0;
+            travelModeSelect.value = trip.travel_mode || 'driving-car';
+
+            // Store starting coordinates if available (add as needed)
+            if (trip.starting_coords) {
+                startingCoords = trip.starting_coords;
+            }
+
+            // Update routing visuals and totals based on loaded itinerary
+            await updateItineraryRouting();
+        } catch (err) {
+            console.error("Error loading saved trip for editing:", err);
+            alert(err.message);
+        }
+    }
+
+    checkAndLoadEditTrip();
+
+    //login and register btn or logout button
     const headerActions = document.querySelector('.header-actions');
 
     function updateHeaderUI() {
@@ -1349,6 +1473,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (token) {
             headerActions.innerHTML = `
                 <span>Welcome!</span>
+                <button id="guided-setup-btn" class="btn-guided">Guided Setup</button>
                 <button id="logout-btn" class="btn-secondary">LOG OUT</button>
             `;
             document.getElementById('logout-btn').addEventListener('click', async () => {
@@ -1370,6 +1495,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     onclick="window.location.href='/register';">SIGN UP</button>
             `;
         }
+        
+        document.getElementById('guided-setup-btn').addEventListener('click', openModal);;
     }
 
     updateHeaderUI();
