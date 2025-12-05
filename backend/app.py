@@ -2,14 +2,16 @@ import os
 import uuid
 import threading
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, send_from_directory, g
+import io
+from flask import Flask, request, jsonify, send_from_directory, make_response, redirect, send_file, g
 from dotenv import load_dotenv
 from functools import wraps
+from pdf import generate_itinerary_pdf
 from services import (
     plan_trip, plan_trip_smart, calculate_route,
     geocoding_cache, weather_cache, places_cache, llm_scoring_cache, routing_cache,
     register_user, login_user, logout_user, get_user_by_session_token,
-    save_itinerary_service, get_trips
+    save_itinerary_service, get_trips, update_itinerary, get_trip
 )
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
@@ -20,19 +22,16 @@ app = Flask(__name__, static_folder="../static", static_url_path="/static")
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        auth_header = request.headers.get('Authorization', '')
-        if not auth_header.lower().startswith("bearer "):
-            return jsonify({"error": "Authorization header missing or invalid"}), 401
+        session_token = request.cookies.get("session_token")
+        # CSRF token should be sent by client in header X-CSRF-Token
+        csrf_header = request.headers.get("X-CSRF-Token")
 
-        session_token = auth_header[7:]
         user = get_user_by_session_token(session_token)
         if not user or 'session_expires' not in user:
             return jsonify({"error": "Login to Use feature"}), 401
-
-        if user['session_expires'] < datetime.utcnow():
-            # Session expired, log the user out
-            logout_user(session_token)
-            return jsonify({"error": "Session Expired Please Logout"}), 401
+        
+        if not csrf_header:
+            return jsonify({"error": "CSRF token mismatch"}), 403
 
         g.current_user = user
         return f(*args, **kwargs)
@@ -54,7 +53,7 @@ def explore():
 def saved():
     return send_from_directory("../static", "saved.html")
 
-@app.route("/login")
+@app.route("/login", methods=["GET"])
 def login_page():
     return send_from_directory("../static", "login.html")
 
@@ -247,66 +246,146 @@ def api_register_user():
         return jsonify(result), 400
     return jsonify(result)
 
-@app.route("/api/login-user", methods=["POST"])
-def api_login_user():
-    data = request.get_json()
-    if not data or not all(k in data for k in ("email", "password")):
-        return jsonify({"error": "missing email or password"}), 400
+@app.route("/login", methods=["POST"])
+def login_form_submit():
+    email = request.form.get("email")
+    password = request.form.get("password")
 
-    result = login_user(data["email"], data["password"])
+    if not email or not password:
+        return redirect("/login?error=Email+and+password+required")
+
+    result = login_user(email, password)
     if "error" in result:
-        return jsonify(result), 400
-    return jsonify(result)
+        return redirect(f"/login?error={result['error']}")
+
+    # Success: redirect and set cookies
+    response = make_response(redirect("/explore"))
+    response.set_cookie(
+        "session_token",
+        value=result["session_token"],
+        httponly=True,
+        secure=True,
+        samesite="Strict"
+    )
+    response.set_cookie(
+        "csrf_token",
+        value=result["csrf_token"],
+        httponly=False,
+        secure=True,
+        samesite="Strict"
+    )
+    return response
 
 @app.route("/api/logout-user", methods=["POST"])
 def api_logout_user():
-    data = request.get_json()
-    if not data or "session_token" not in data:
-        return jsonify({"error": "missing session_token"}), 400
+    """Logout user - clear session"""
+    session_token = request.cookies.get("session_token")
+    
+    if not session_token:
+        return {"error": "No active session"}, 400
 
-    result = logout_user(data["session_token"])
-    if "error" in result:
-        return jsonify(result), 400
-    return jsonify(result)
+    logout_user(session_token)
+    
+    response = make_response({"success": True, "message": "Logged out successfully"})
+    response.set_cookie("session_token", "", expires=0, httponly=True, secure=True, samesite="Strict")
+    response.set_cookie("csrf_token", "", expires=0, secure=True, samesite="Strict")
+    
+    return response
 
-@app.route('/save-itinerary', methods=['POST'])
+@app.route('/save-itinerary', methods=['POST', 'PATCH'])
 @login_required
 def save_itinerary():
     """
-    Save the current itinerary for the logged-in user.
-    Expects JSON body:
-    - starting_address: string
-    - places: array of place objects
-    - budget: string
-    - interests: array of strings
-    - travel_mode: string
-    - max_distance: number
+    POST  -> create new itinerary
+    PATCH -> update existing itinerary (requires trip_id)
     """
-    data = request.get_json()
+
+    data = request.get_json()   # <-- FIXED (you had 'request.get_json = request.get_json()')
+
     if not data or "places" not in data or not data["places"]:
         return jsonify({"error": "No activities provided"}), 400
 
-    # Add the logged-in user's ID
-    data["user_id"] = str(g.current_user["_id"])
+    # Attach current user id
+    user_id = str(g.current_user["_id"])
+    data["user_id"] = user_id
 
     try:
-        result = save_itinerary_service(data)  # calls your service to save to DB
+        # ---------------------------
+        # PATCH (update existing trip)
+        # ---------------------------
+        if request.method == 'PATCH':
+            response = update_itinerary(data, user_id)
+
+            if response:
+                return jsonify({
+                    "success": True,
+                    "trip_id": response,
+                    "message": "Trip updated successfully!"
+                }), 200
+
+            return jsonify({"error": "Trip not found or access denied"}), 404
+            
+
+        # ---------------------------
+        # POST (create new trip)
+        # ---------------------------
+        result = save_itinerary_service(data)
         return jsonify({
             "success": True,
             "trip_id": str(result["trip_id"]),
             "message": "Trip saved successfully!"
         }), 200
-    except Exception as e:
-        print("Error saving trip:", e)
-        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/protected')
-@login_required
-def protected():
-    user = g.current_user  # The full user dict from MongoDB
-    return jsonify({
-        "message": f"Hello {user.get('First_Name', 'user')}! This is protected data."
-    })
+    except Exception as e:
+        print("Error saving/updating trip:", e)
+        return jsonify({"error": str(e)}), 500
+    
+@app.route("/current-user", methods=["GET"])
+def check_user():
+    """Check if user is logged in and return user info"""
+    session_token = request.cookies.get("session_token")
+    
+    if not session_token:
+        return {"logged_in": False}, 200
+    
+    user = get_user_by_session_token(session_token)
+    
+    if not user:
+        return {"logged_in": False}, 200
+    
+    return {
+        "logged_in": True,
+        "user": {
+            "_id": str(user["_id"]),
+            "first_name": user.get("First_Name", ""),
+            "last_name": user.get("Last_Name", ""),
+            "email": user.get("email", "")
+        }
+    }, 200
+
+
+@app.route("/share-trip/pdf/<trip_id>")
+def download_trip_pdf(trip_id):
+    
+    print("IT IS WORKING HERE")
+    trip = get_trip(trip_id)
+
+    if not trip:
+        return {"error": "Trip not found or access denied"}, 404
+
+    # Convert ObjectId to string and date to text
+    if "created_at" in trip:
+        trip["created_at"] = trip["created_at"].strftime("%Y-%m-%d %H:%M")
+
+    pdf_bytes = generate_itinerary_pdf(trip)
+
+
+    return send_file(
+        io.BytesIO(pdf_bytes),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"itinerary_{trip_id}.pdf"
+    )
 
 @app.route("/api/get-trips", methods=["GET"])
 @login_required
