@@ -1086,11 +1086,8 @@ def register_user(first_name, last_name, email, password):
 
 def login_user(email, password):
     user = users_col.find_one({"email": email})
-    if not user:
-        return {"error": "User not found"}
-
-    if hashlib.sha256(password.encode()).hexdigest() != user["password_hash"]:
-        return {"error": "Invalid password"}
+    if not user or hashlib.sha256(password.encode()).hexdigest() != user["password_hash"]:
+        return {"error": "Invalid+password+or+email"}
 
     session_token = secrets.token_hex(16)
     csrf_token = secrets.token_hex(8)
@@ -1098,7 +1095,11 @@ def login_user(email, password):
 
     users_col.update_one(
         {"_id": user["_id"]},
-        {"$set": {"session_token": session_token, "csrf_token": csrf_token, "session_expires": expires_at}}
+        {"$set": {
+            "session_token": session_token, 
+            "csrf_token": csrf_token, 
+            "session_expires": expires_at
+        }}
     )
 
     return {"success": True, "session_token": session_token, "csrf_token": csrf_token, "user_id": str(user["_id"])}
@@ -1117,7 +1118,29 @@ def logout_user(session_token):
     return {"success": True}
 
 def get_user_by_session_token(session_token):
+    # Reject missing or empty tokens immediately
+    if not session_token:
+        return None
+
     user = users_col.find_one({"session_token": session_token})
+    if not user:
+        return None
+
+    # Optional safety: ensure session hasn’t expired
+    if "session_expires" in user and user["session_expires"] < datetime.utcnow():
+        return None
+    
+    time_left = user["session_expires"] - datetime.utcnow()
+
+    if time_left < timedelta(minutes=10):
+        new_expires = datetime.utcnow() + timedelta(minutes=30)
+        users_col.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"session_expires": new_expires}}
+        )
+        user["session_expires"] = new_expires
+        user["session_refreshed"] = True
+    
     return user
 
 def save_itinerary_service(data):
@@ -1146,3 +1169,40 @@ def get_trips(user_id=None):
     for t in trips:
         t["_id"] = str(t["_id"])
     return trips
+
+def get_trip(trip_id):
+    query = {
+        "_id": ObjectId(trip_id),
+    }
+
+    trip = itinerary_col.find_one(query)
+    if not trip:
+        return None
+
+    trip["_id"] = str(trip["_id"])
+    return trip
+
+def update_itinerary(data, user_id):
+    trip_id = data.get("trip_id")
+    if not trip_id:
+        return None
+
+    # Check if this trip belongs to the logged-in user
+    existing = itinerary_col.find_one({
+        "_id": ObjectId(trip_id),
+        "user_id": user_id
+    })
+
+    if not existing:
+        return None
+
+    # Remove trip_id so it's not overwritten
+    update_data = {k: v for k, v in data.items() if k != "trip_id"}
+    update_data["updated_at"] = datetime.utcnow()
+
+    itinerary_col.update_one(
+        {"_id": ObjectId(trip_id)},
+        {"$set": update_data}
+    )
+
+    return trip_id

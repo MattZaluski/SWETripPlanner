@@ -1,3 +1,5 @@
+let editId;
+
 document.addEventListener('DOMContentLoaded', () => {
     const searchBtn = document.getElementById('search-btn');
     const startingAddressInput = document.getElementById('starting-address');
@@ -7,6 +9,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const travelModeSelect = document.getElementById('travel-mode');
     const cardsContainer = document.getElementById('cards-container');
     const loadingMessage = document.getElementById('loading');
+
+    // Helper function to get cookies
+    function getCookie(name) {
+        const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+        return match ? match[2] : null;
+    }
 
     // Pagination state
     let allItineraryItems = [];
@@ -84,9 +92,9 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/plan', {
                 method: 'POST',
+                credentials: 'include',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + localStorage.getItem('session_token')
                 },
                 body: JSON.stringify({
                     starting_address: startingAddress,
@@ -230,9 +238,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const response = await fetch('/api/plan', {
                 method: 'POST',
+                credentials: 'include',
                 headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + localStorage.getItem('session_token')
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     starting_address: startingAddress,
@@ -464,15 +472,24 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/calculate-route', {
                 method: 'POST',
+                credentials: 'include',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + localStorage.getItem('session_token')
+                    'X-CSRF-Token': getCookie('csrf_token') || ''
                 },
                 body: JSON.stringify({
                     waypoints: waypoints,
                     travel_mode: currentTravelMode
                 })
             });
+
+            if (response.status === 401) {
+                const data = await response.json();
+                if (data.logged_out) {
+                    window.location.href = '/login?error=Session+expired';
+                    return;
+                }
+            }
             
             const routeData = await response.json();
             
@@ -1113,9 +1130,9 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/plan-smart', {
                 method: 'POST',
+                credentials: 'include',
                 headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + localStorage.getItem('session_token')
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     starting_address: answers['starting-address'] || '',
@@ -1341,11 +1358,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     //saving itinerary button
     const saveBtn = document.getElementById('save-itinerary-btn');
+    const shareBtn = document.getElementById("share-itinerary-btn");
 
     // Enable the save button if there are activities
     const itineraryContainer = document.getElementById('itinerary-cards');
     const observer = new MutationObserver(() => {
         saveBtn.disabled = itineraryContainer.children.length === 0;
+        shareBtn.disabled = itineraryContainer.children.length === 0;
     });
     observer.observe(itineraryContainer, { childList: true });
 
@@ -1368,64 +1387,162 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (activities.length === 0) return;
 
+        // ←←← NEW: detect if we are editing an existing trip
+        const urlParams = new URLSearchParams(window.location.search);
+        editId  = urlParams.get('edit');           // e.g. ?edit=670b2f1a9c8d123456789abc
+
+        const payload = {
+            starting_address: startingAddressInput.value || null,
+            places: activities,
+            budget: budgetSlider?.value || null,
+            interests: interestsInput?.value?.split(',').map(s => s.trim()).filter(Boolean) || [],
+            travel_mode: travelModeSelect?.value || 'driving',
+            max_distance: maxDistanceSelect?.value || null
+        };
+
+        // If we will send the trip_id only when updating
+        if (editId) {
+            payload.trip_id = editId;
+        }
+
         try {
             const response = await fetch('/save-itinerary', {
-                method: 'POST',
+                method: editId ? 'PATCH' : 'POST',           // ← PATCH when editing
+                credentials: 'include',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + localStorage.getItem('session_token')
+                    'X-CSRF-Token': getCookie('csrf_token') || ''
                 },
-                body: JSON.stringify({
-                    starting_address: startingAddressInput.value || null,
-                    places: activities,
-                    budget: budgetSlider?.value || null,
-                    interests: interestsInput?.value?.split(',') || [],
-                    travel_mode: travelModeSelect?.value || 'driving',
-                    max_distance: maxDistanceSelect?.value || null
-                })
+                body: JSON.stringify(payload)
             });
+
+            if (response.status === 401) {
+                const data = await response.json();
+                if (data.logged_out) {
+                    window.location.href = '/login?error=Session+expired';
+                    return;
+                }
+            }
 
             const result = await response.json();
             
             if (result.error) {
                 alert(result.error);
-                loadingMessage.style.display = 'none';
                 return;
             }
 
-            // Store pagination state
+            // If we just created a new trip while in edit mode, replace the URL so the edit param stays correct
+            if (!editId && result.trip_id) {
+                // New trip → change URL to edit mode without reloading
+                const newUrl = new URL(window.location);
+                newUrl.searchParams.set('edit', result.trip_id);
+                window.history.replaceState({}, '', newUrl);
+            }
+
+            alert(editId ? 'Itinerary updated successfully!' : 'Itinerary saved successfully!');
+
+            // Keep the rest of your existing success logic (weather, pagination, etc.)
             searchSessionId = result.session_id;
             currentOffset = result.limit;
             hasMoreResults = result.has_more;
-            
-            // Store starting coordinates
             startingCoords = result.starting_coords;
-            
-            // Display weather widget
             displayWeatherWidget(result.weather);
+
         } catch (err) {
             console.error(err);
             alert('Error saving itinerary.');
         }
+    });
 
-        
+    async function downloadPDF(tripId) {
+        const pdfUrl = `/share-trip/pdf/${tripId}`;
+
+        try {
+            const response = await fetch(pdfUrl, {
+                method: "GET",
+                credentials: "include"
+            });
+
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `itinerary-${tripId}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            
+            setTimeout(() => {
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            }, 200);
+        } catch (err) {
+            console.error("PDF download failed:", err);
+        }
+    }
+
+    function shareTrip(id) {
+        // 1. Auto-download the PDF
+        downloadPDF(id);
+
+        // 2. Prepare mailto link
+        const subject = encodeURIComponent("Your Trip Itinerary");
+        const body = encodeURIComponent(
+            `Hi,\n\nYour itinerary PDF has been downloaded.\nPlease attach it to this email.\n\nDownload link as backup:\n${window.location.origin}/share-trip/pdf/${id}\n\nBest regards!`
+        );
+
+        // 3. Open email client
+        window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    }
+
+    shareBtn.addEventListener('click', async () => {
+        const activities = Array.from(itineraryContainer.children)
+            .filter(card => !card.classList.contains('empty-itinerary-message'))
+            .map(card => {
+                const data = JSON.parse(card.dataset.itemId);
+                return {
+                    id: data.id || null,
+                    name: data.name,
+                    cost: data.cost,
+                    duration: data.time,
+                    distance_km: data.distance_km,
+                    lat: data.lat,
+                    lng: data.lng
+                };
+            });
+
+        if (activities.length === 0) return;
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const editId = urlParams.get('edit');
+
+        if (!editId) {
+            alert("You must save your itinerary before sharing it.");
+            return;
+        }
+
+        shareTrip(editId);
     });
 
     async function checkAndLoadEditTrip() {
         const params = new URLSearchParams(window.location.search);
         const editId = params.get('edit');
-        if (!editId) return;  // No edit param, skip loading
-
-        const token = localStorage.getItem('session_token');
-        if (!token) {
-            alert('Please log in to edit a saved trip.');
-            return;
-        }
+        if (!editId) return;
 
         try {
             const response = await fetch(`/api/get-trips`, {
-            headers: { "Authorization": `Bearer ${token}` }
+                credentials: 'include',
+                headers: { 
+                    "X-CSRF-Token": getCookie('csrf_token') || ''
+                }
             });
+            
+            if (response.status === 401) {
+                alert('Please log in to edit a saved trip.');
+                window.location.href = '/login';
+                return;
+            }
+
             const data = await response.json();
 
             if (!data.success) throw new Error(data.error || "Failed to load trips.");
@@ -1468,36 +1585,65 @@ document.addEventListener('DOMContentLoaded', () => {
     //login and register btn or logout button
     const headerActions = document.querySelector('.header-actions');
 
-    function updateHeaderUI() {
-        const token = localStorage.getItem('session_token');
-        if (token) {
+        // ---------- Check Login ----------
+    async function checkLogin() {
+        try {
+            const res = await fetch('/current-user', {
+                credentials: 'include' // Cookies sent automatically
+            });
+            
+            if (!res.ok) return null;
+            
+            const data = await res.json();
+            return data.logged_in ? data.user : null;
+        } catch (err) {
+            console.error("Error checking login:", err);
+            return null;
+        }
+    }
+
+
+    async function logout() {
+        try {
+            await fetch('/api/logout-user', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': getCookie('csrf_token') || ''
+                }
+            });
+        } catch (err) {
+            console.error('Error during logout:', err);
+        }
+        window.location.href = '/login';
+    }
+
+    async function updateHeaderUI() {
+        const headerActions = document.querySelector('.header-actions');
+        if (!headerActions) return;
+        
+        const user = await checkLogin();
+        
+        if (user) {
             headerActions.innerHTML = `
-                <span>Welcome!</span>
+                <span>Welcome, ${user.first_name}!</span>
                 <button id="guided-setup-btn" class="btn-guided">Guided Setup</button>
                 <button id="logout-btn" class="btn-secondary">LOG OUT</button>
             `;
-            document.getElementById('logout-btn').addEventListener('click', async () => {
-                await fetch('/api/logout-user', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({session_token: token})
-                });
-                localStorage.removeItem('session_token');
-                localStorage.removeItem('csrf_token');
-                updateHeaderUI();
-            });
+            document.getElementById('logout-btn')?.addEventListener('click', logout);
+            document.getElementById('guided-setup-btn')?.addEventListener('click', openModal);
         } else {
             headerActions.innerHTML = `
                 <button id="guided-setup-btn" class="btn-guided">Guided Setup</button>
-                <button class="btn-secondary"
-                        onclick="window.location.href='/login';">LOG IN</button>
-                <button class="btn-primary" 
-                    onclick="window.location.href='/register';">SIGN UP</button>
+                <button class="btn-secondary" onclick="window.location.href='/login';">LOG IN</button>
+                <button class="btn-primary" onclick="window.location.href='/register';">SIGN UP</button>
             `;
+            document.getElementById('guided-setup-btn')?.addEventListener('click', openModal);
         }
-        
-        document.getElementById('guided-setup-btn').addEventListener('click', openModal);;
     }
 
+    // Initialize
     updateHeaderUI();
+    checkAndLoadEditTrip();
 });

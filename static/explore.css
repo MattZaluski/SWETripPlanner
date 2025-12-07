@@ -1672,3 +1672,13 @@ body {
     }
 }
 
+.name-row {
+    display: flex;
+    gap: 1rem;
+}
+
+.name-row > div {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
