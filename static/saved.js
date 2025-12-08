@@ -131,6 +131,33 @@ async function loadTrips() {
 
         grid.empty();
         
+        // helper to escape HTML
+        function escapeHtml(str) {
+            if (!str && str !== 0) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // Format a short summary of top places with score and short reason
+        function formatPlacesSummary(places) {
+            if (!places || places.length === 0) return '<em>No places</em>';
+            const parts = [];
+            const top = places.slice(0, 3);
+            top.forEach(p => {
+                const name = escapeHtml(p.name || 'Unknown');
+                const score = (typeof p.relevance_score === 'number') ? p.relevance_score : (typeof p.score === 'number' ? p.score : null);
+                const reason = escapeHtml((p.matched_reason || p.reason || '').slice(0, 80));
+                const scoreText = score !== null ? `<span class="small-score">${score}%</span>` : '';
+                parts.push(`${name} ${scoreText}${reason ? `<div class=\"small-reason\">${reason}${(p.matched_reason || p.reason || '').length > 80 ? '...' : ''}</div>` : ''}`);
+            });
+            if (places.length > 3) parts.push('...');
+            return parts.join('<br>');
+        }
+
         trips.forEach(trip => {
             const imageUrl = `/static/images/image${Math.floor(Math.random() * 2) + 1}.jpg`;
             const totalCost = trip.places.reduce((sum, p) => {
@@ -140,27 +167,29 @@ async function loadTrips() {
             const firstTime = trip.places[0]?.duration || "—";
             const lastTime = trip.places[trip.places.length - 1]?.duration || "—";
 
+            const placesSummary = formatPlacesSummary(trip.places || []);
+
             const card = `
-                <div class="trip-card" data-trip-id="${trip._id}">
+                <div class="trip-card" data-trip-id="${escapeHtml(trip._id)}">
                     <div class="card-image">
                         <img src="${imageUrl}" alt="Trip thumbnail" class="card-thumbnail"/>
-                        <div class="relevance-badge"><span>${"$".repeat(trip.budget || 1)}</span></div>
+                        <div class="relevance-badge"><span>${escapeHtml("$".repeat(trip.budget || 1))}</span></div>
                     </div>
                     <div class="card-body">
-                        <h3 class="card-title">${trip.starting_address || "Unknown Trip"}</h3>
-                        <p class="card-address">${trip.interests?.join(", ") || "No interests"}</p>
+                        <h3 class="card-title">${escapeHtml(trip.starting_address || "Unknown Trip")}</h3>
+                        <p class="card-address">${escapeHtml((trip.interests || []).join(', ') || 'No interests')}</p>
                         <p class="card-description">
-                            ${trip.places.slice(0, 3).map(p => p.name).join(", ")}${trip.places.length > 3 ? "..." : ""}
+                            ${placesSummary}
                         </p>
                     </div>
                     <div class="card-footer">
                         <div class="footer-left">
                             <div class="card-price">~ $${totalCost.toFixed(2)}</div>
-                            <div class="card-time">${firstTime} - ${lastTime}</div>
+                            <div class="card-time">${escapeHtml(firstTime)} - ${escapeHtml(lastTime)}</div>
                         </div>
                         <div class="footer-right">
-                            <button class="btn-small" onclick="editTrip('${trip._id}')">Edit</button>
-                            <button class="btn-small" onclick="shareTrip('${trip._id}')">Share</button>
+                            <button class="btn-small" onclick="editTrip('${escapeHtml(trip._id)}')">Edit</button>
+                            <button class="btn-small" onclick="shareTrip('${escapeHtml(trip._id)}')">Share</button>
                         </div>
                     </div>
                 </div>

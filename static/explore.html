@@ -13,8 +13,7 @@
         <div class="header-content">
             <img src="/static/images/logothing.png" alt="Geo Guide" class="logo">
             <nav class="main-nav">
-                <a href="/" class="nav-link active">Home</a>
-                <a href="/explore" class="nav-link">Plan Trip</a>
+                <a href="/explore" class="nav-link active">Plan Trip</a>
                 <a href="/saved" class="nav-link">Saved Trips</a>
             </nav>
             <div class="header-actions">
@@ -111,52 +110,67 @@
                     </div>
                 </div>
 
-                <h3 class="filter-section-title">Activity Filters</h3>
+                <h3 class="filter-section-title">Price Range</h3>
                 <div class="filter-group">
                     <label class="filter-checkbox">
-                        <input type="checkbox" class="activity-filter" value="Family Friendly">
-                        <span>Family Friendly</span>
+                        <input type="checkbox" class="activity-filter" value="free">
+                        <span>💰 Free</span>
                     </label>
                     <label class="filter-checkbox">
-                        <input type="checkbox" class="activity-filter" value="Outdoors">
-                        <span>Outdoors</span>
+                        <input type="checkbox" class="activity-filter" value="budget">
+                        <span>💵 Under $25</span>
                     </label>
                     <label class="filter-checkbox">
-                        <input type="checkbox" class="activity-filter" value="Food">
-                        <span>Food</span>
+                        <input type="checkbox" class="activity-filter" value="moderate">
+                        <span>💳 $25-$75</span>
+                    </label>
+                </div>
+
+                <h3 class="filter-section-title">Activity Type</h3>
+                <div class="filter-group">
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="activity-filter" value="type-museum">
+                        <span>🏛️ Museum</span>
                     </label>
                     <label class="filter-checkbox">
-                        <input type="checkbox" class="activity-filter" value="Solo travel">
-                        <span>Solo travel</span>
+                        <input type="checkbox" class="activity-filter" value="type-park">
+                        <span>🌳 Park</span>
                     </label>
                     <label class="filter-checkbox">
-                        <input type="checkbox" class="activity-filter" value="Arts & Culture">
-                        <span>Arts & Culture</span>
+                        <input type="checkbox" class="activity-filter" value="type-restaurant">
+                        <span>🍽️ Restaurant</span>
                     </label>
                     <label class="filter-checkbox">
-                        <input type="checkbox" class="activity-filter" value="Shopping">
-                        <span>Shopping</span>
+                        <input type="checkbox" class="activity-filter" value="type-shopping">
+                        <span>🛍️ Shopping</span>
                     </label>
                     <label class="filter-checkbox">
-                        <input type="checkbox" class="activity-filter" value="Wheelchair accessible">
-                        <span>Wheelchair accessible</span>
+                        <input type="checkbox" class="activity-filter" value="type-entertainment">
+                        <span>🎭 Entertainment</span>
                     </label>
-                    <a href="#" class="more-link">+ More</a>
+                </div>
+
+                <h3 class="filter-section-title">Suitability</h3>
+                <div class="filter-group">
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="activity-filter" value="indoor">
+                        <span>🏢 Indoor Only</span>
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" class="activity-filter" value="high-match">
+                        <span>⭐ 80%+ Match</span>
+                    </label>
                 </div>
 
                 <h3 class="filter-section-title">Weather Filters</h3>
                 <div class="filter-group">
                     <label class="filter-checkbox">
-                        <input type="checkbox" class="weather-filter" value="clear">
-                        <span>Clear Skies</span>
+                        <input type="checkbox" class="weather-filter" value="indoor-friendly">
+                        <span>🏢 Indoor Friendly</span>
                     </label>
                     <label class="filter-checkbox">
-                        <input type="checkbox" class="weather-filter" value="rainy">
-                        <span>Rain Protection</span>
-                    </label>
-                    <label class="filter-checkbox">
-                        <input type="checkbox" class="weather-filter" value="sunny">
-                        <span>Sunny Weather</span>
+                        <input type="checkbox" class="weather-filter" value="outdoor-safe">
+                        <span>🌞 Outdoor Safe</span>
                     </label>
                 </div>
             </aside>
