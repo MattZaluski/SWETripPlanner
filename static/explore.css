@@ -258,8 +258,7 @@ body {
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
     height: fit-content;
-    position: sticky;
-    top: 100px;
+    position: relative;
     border: 1px solid #E5DDD5;
 }
 
@@ -860,6 +859,56 @@ body {
     font-size: 0.85rem;
     color: #666666;
     margin-bottom: 0.5rem;
+}
+
+/* Score display for itinerary items */
+.itinerary-score {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+}
+
+.match-score {
+    font-weight: 700;
+    padding: 6px 10px;
+    border-radius: 16px;
+    font-size: 12px;
+    display: inline-block;
+}
+
+.score-excellent {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.score-good {
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeeba;
+}
+
+.score-fair {
+    background-color: #e2e3e5;
+    color: #383d41;
+    border: 1px solid #d6d8db;
+}
+
+.score-badge {
+    font-size: 11px;
+    color: #666;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.itinerary-reason {
+    font-size: 13px;
+    line-height: 1.4;
+    color: #333;
+    margin: 6px 0 8px 0;
+    font-style: italic;
 }
 
 .itinerary-remove-btn {

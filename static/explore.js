@@ -1,5 +1,16 @@
 let editId;
 
+// HTML sanitization function
+function escapeHtml(str) {
+    if (!str && str !== 0) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const searchBtn = document.getElementById('search-btn');
     const startingAddressInput = document.getElementById('starting-address');
@@ -127,7 +138,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Display weather widget
             displayWeatherWidget(result.weather);
             
-            displayCards(result.itinerary || []);
+            displayCards(result.places || []);
 
         } catch (err) {
             alert('Error: ' + err.message);
@@ -398,18 +409,30 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Weather warning for itinerary
         const weatherWarning = item.weather_warning ? `
-            <div class="itinerary-weather-warning">${item.weather_warning}</div>
+            <div class="itinerary-weather-warning">${escapeHtml(item.weather_warning)}</div>
         ` : '';
-        
+
+        // Relevance score and matched reason (use fallbacks)
+        const relevanceScore = (typeof item.relevance_score === 'number') ? item.relevance_score : (typeof item.score === 'number' ? item.score : 50);
+        const matchedReasonRaw = item.matched_reason || item.reason || 'A great place to visit during your trip.';
+        const matchedReason = escapeHtml(matchedReasonRaw);
+        const scoreClass = relevanceScore >= 85 ? 'score-excellent' : (relevanceScore >= 50 ? 'score-good' : 'score-fair');
+        const scoreBadge = relevanceScore >= 85 ? '⭐ Excellent Match' : (relevanceScore >= 70 ? '✓ Good Match' : (relevanceScore >= 50 ? '◐ Fair Match' : '~ Low Match'));
+
         card.innerHTML = `
             <div class="itinerary-card-image">
                 <img src="${imageUrl}" alt="Activity" class="itinerary-thumbnail">
             </div>
             <div class="itinerary-card-body">
-                <div class="itinerary-card-name">${item.name || 'Activity'}</div>
-                <div class="itinerary-card-address">📍 ${address}</div>
+                <div class="itinerary-card-name">${escapeHtml(item.name || 'Activity')}</div>
+                <div class="itinerary-card-address">📍 ${escapeHtml(address)}</div>
                 ${weatherWarning}
-                <div class="itinerary-card-details">${distanceKm} km • ${costText}</div>
+                <div class="itinerary-score">
+                    <span class="match-score ${scoreClass}">${relevanceScore}% Match</span>
+                    <span class="score-badge">${scoreBadge}</span>
+                </div>
+                <div class="itinerary-reason">${matchedReason}</div>
+                <div class="itinerary-card-details">${distanceKm} km • ${escapeHtml(costText)}</div>
                 <div class="itinerary-card-details itinerary-route-info">Calculating route...</div>
                 <button class="itinerary-remove-btn" data-remove-id="${JSON.stringify(item)}">Remove</button>
             </div>
@@ -595,20 +618,157 @@ document.addEventListener('DOMContentLoaded', () => {
         return stars;
     }
 
-    // Filter checkboxes (for future functionality)
+    // Helper function to parse cost string to numeric range
+    function getCostRange(costStr) {
+        if (!costStr) return { min: 0, max: 999 };
+        costStr = costStr.toLowerCase().trim();
+        if (costStr === 'free') return { min: 0, max: 0 };
+        if (costStr.includes('low') || costStr.includes('under')) return { min: 0, max: 25 };
+        if (costStr.includes('medium') || costStr.includes('moderate')) return { min: 25, max: 75 };
+        if (costStr.includes('high') || costStr.includes('$')) {
+            // Extract numeric value from cost string like "$15.00"
+            const match = costStr.match(/\d+(?:\.\d{2})?/);
+            if (match) {
+                const price = parseFloat(match[0]);
+                return { min: price, max: price * 2 }; // Rough estimate
+            }
+        }
+        return { min: 0, max: 999 };
+    }
+
+    // Helper function to check if activity type matches a filter
+    function typeMatchesFilter(activityType, filterValue) {
+        if (!activityType) return false;
+        const typeLower = activityType.toLowerCase();
+        const filterType = filterValue.replace('type-', '').toLowerCase();
+        return typeLower.includes(filterType);
+    }
+
+    // Get active filters
+    function getActiveFilters() {
+        const activityFilterElems = document.querySelectorAll('.activity-filter');
+        const weatherFilterElems = document.querySelectorAll('.weather-filter');
+        
+        const filters = {
+            priceRanges: [],
+            activityTypes: [],
+            indoorOnly: false,
+            highMatchOnly: false,
+            weatherFilters: []
+        };
+        
+        activityFilterElems.forEach(checkbox => {
+            if (checkbox.checked) {
+                const val = checkbox.value;
+                if (val === 'free' || val === 'budget' || val === 'moderate') {
+                    filters.priceRanges.push(val);
+                } else if (val.startsWith('type-')) {
+                    filters.activityTypes.push(val);
+                } else if (val === 'indoor') {
+                    filters.indoorOnly = true;
+                } else if (val === 'high-match') {
+                    filters.highMatchOnly = true;
+                }
+            }
+        });
+        
+        weatherFilterElems.forEach(checkbox => {
+            if (checkbox.checked) {
+                filters.weatherFilters.push(checkbox.value);
+            }
+        });
+        
+        return filters;
+    }
+
+    // Apply filters to all visible cards
+    function applyFilters() {
+        const filters = getActiveFilters();
+        const allCards = document.querySelectorAll('.activity-card');
+        let visibleCount = 0;
+        
+        allCards.forEach(card => {
+            let isVisible = true;
+            
+            // Get card data
+            const cardData = JSON.parse(card.getAttribute('data-activity-data'));
+            const cost = cardData.cost || 'Free';
+            const type = cardData.type || '';
+            const isOutdoor = cardData.is_outdoor || false;
+            const hasWeatherWarning = !!cardData.weather_warning;
+            const relevanceScore = cardData.relevance_score || 0;
+            
+            // Price range filter
+            if (filters.priceRanges.length > 0) {
+                const costRange = getCostRange(cost);
+                const matchesPrice = filters.priceRanges.some(priceRange => {
+                    if (priceRange === 'free') return costRange.min === 0 && costRange.max === 0;
+                    if (priceRange === 'budget') return costRange.min >= 0 && costRange.max <= 25;
+                    if (priceRange === 'moderate') return costRange.min >= 25 && costRange.max <= 75;
+                    return false;
+                });
+                if (!matchesPrice) isVisible = false;
+            }
+            
+            // Activity type filter
+            if (isVisible && filters.activityTypes.length > 0) {
+                const matchesType = filters.activityTypes.some(typeFilter => 
+                    typeMatchesFilter(type, typeFilter)
+                );
+                if (!matchesType) isVisible = false;
+            }
+            
+            // Indoor only filter
+            if (isVisible && filters.indoorOnly) {
+                if (isOutdoor) isVisible = false;
+            }
+            
+            // High match filter (80%+ relevance)
+            if (isVisible && filters.highMatchOnly) {
+                if (relevanceScore < 80) isVisible = false;
+            }
+            
+            // Weather filters
+            if (isVisible && filters.weatherFilters.length > 0) {
+                const matchesWeather = filters.weatherFilters.some(weatherFilter => {
+                    if (weatherFilter === 'indoor-friendly') return !isOutdoor;
+                    if (weatherFilter === 'outdoor-safe') return isOutdoor && !hasWeatherWarning;
+                    return false;
+                });
+                if (!matchesWeather) isVisible = false;
+            }
+            
+            // Apply visibility
+            card.style.display = isVisible ? 'flex' : 'none';
+            if (isVisible) visibleCount++;
+        });
+        
+        // Show empty message if no cards match filters
+        if (visibleCount === 0) {
+            let emptyMsg = document.querySelector('.cards-section .empty-message');
+            if (!emptyMsg) {
+                emptyMsg = document.createElement('div');
+                emptyMsg.className = 'empty-message';
+                emptyMsg.textContent = 'No activities match your filters. Try adjusting them.';
+                cardsContainer.parentElement.insertBefore(emptyMsg, cardsContainer);
+            }
+            emptyMsg.style.display = 'block';
+        } else {
+            const emptyMsg = document.querySelector('.cards-section .empty-message');
+            if (emptyMsg) emptyMsg.style.display = 'none';
+        }
+    }
+
+    // Wire filter checkboxes to apply filters
     const activityFilters = document.querySelectorAll('.activity-filter');
     const weatherFilters = document.querySelectorAll('.weather-filter');
 
     activityFilters.forEach(checkbox => {
-        checkbox.addEventListener('change', () => {
-            console.log('Filter changed:', checkbox.value, checkbox.checked);
-        });
+        checkbox.addEventListener('change', applyFilters);
     });
 
     weatherFilters.forEach(checkbox => {
-        checkbox.addEventListener('change', () => {
-            console.log('Weather filter changed:', checkbox.value, checkbox.checked);
-        });
+        checkbox.addEventListener('change', applyFilters);
     });
 
     // ============ Guided Setup Modal ============

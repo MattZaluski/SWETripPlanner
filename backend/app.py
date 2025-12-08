@@ -92,7 +92,7 @@ def api_plan():
                 paginated_results = results[offset:offset + limit]
                 
                 return jsonify({
-                    'itinerary': paginated_results,
+                    'places': paginated_results,
                     'weather': cached['weather'],
                     'starting_coords': cached['starting_coords'],
                     'session_id': session_id,
@@ -113,18 +113,18 @@ def api_plan():
         
         # Cache full results (expires in 10 minutes)
         search_results_cache[new_session_id] = {
-            'results': result.get('itinerary', []),
+            'results': result.get('places', []),
             'weather': result.get('weather', {}),
             'starting_coords': result.get('starting_coords', {}),
             'expires': datetime.now() + timedelta(minutes=10)
         }
         
         # Return first page
-        all_results = result.get('itinerary', [])
+        all_results = result.get('places', [])
         paginated_results = all_results[0:limit]
         
         return jsonify({
-            'itinerary': paginated_results,
+            'places': paginated_results,
             'weather': result.get('weather', {}),
             'starting_coords': result.get('starting_coords', {}),
             'session_id': new_session_id,
