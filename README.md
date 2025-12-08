@@ -1,11 +1,31 @@
 # SWETripPlanner
-New Repo for Trip Planner
-Quick one-page setup (exact commands)
 
-1) Clone repo & enter folder
+AI-powered trip planning application with interactive maps, smart itinerary building, and voice-guided tours.
+
+## Features
+
+- 🗺️ **Interactive Map** - Visualize your trip with real-time route rendering
+- 🤖 **AI Trip Assistant** - Chat with AI for personalized recommendations
+- 📍 **Smart Planning** - AI-scored activities based on your interests
+- 🎯 **Drag & Drop Itinerary** - Easily reorder your trip stops
+- 🎬 **Animated Playback** - Watch your trip unfold with voice narration
+- 🧠 **Preference Learning** - System learns from your choices over time
+- 🔄 **Route Optimization** - AI suggests better ordering to save time
+
+## Documentation
+
+- [AI Features Guide](./AI_FEATURES.md) - Comprehensive AI functionality docs
+- [Map Features Guide](./MAP_FEATURES.md) - Interactive map documentation
+- [Feature Summary](./FEATURE_SUMMARY.md) - Complete feature overview
+
+---
+
+## Quick Start
+
+### 1) Clone repo & enter folder
 ```bash
-git clone https://github.com/<ORG>/trip-planner.git
-cd trip-planner
+git clone https://github.com/MattZaluski/SWETripPlanner.git
+cd SWETripPlanner
 ```
 
 2) Create a branch (optional but recommended)
@@ -67,14 +87,74 @@ Press `Ctrl/Cmd + Shift + P → Python: Select Interpreter →` choose the venv 
 
 7) Start the dev server
 ```bash
-python backend/app.py
+cd backend && python app.py
 ```
 
-or
-```bash
-python -m flask --app backend/app.py --debug run
-```
-
+The app runs on port **5050** by default.
 
 8) Open the app  
-In browser: `http://127.0.0.1:5000`
+In browser: `http://127.0.0.1:5050`
+
+---
+
+## Environment Variables
+
+Create a `.env` file in the `backend/` folder:
+
+```bash
+# Required for full functionality (optional - MOCK mode works without)
+OPENAI_API_KEY=sk-...          # AI features (GPT-4o-mini)
+GEMINI_API_KEY=...             # Fallback AI (Gemini 2.0 Flash)
+GEOAPIFY_KEY=...               # Maps, geocoding, routing
+WEATHER_API_KEY=...            # Weather data
+MONGODB_URI=mongodb://...      # User accounts & saved trips
+
+# Development
+MOCK=true                      # Enable mock mode (no API keys needed)
+FLASK_DEBUG=true               # Enable debug mode
+```
+
+### MOCK Mode
+
+Set `MOCK=true` to run without any API keys:
+- All features work with realistic sample data
+- Perfect for development and testing
+- No external API calls made
+
+---
+
+## API Keys
+
+| Service | Purpose | Get Key |
+|---------|---------|---------|
+| OpenAI | AI chat, summaries, optimization | [platform.openai.com](https://platform.openai.com) |
+| Google Gemini | Fallback AI | [ai.google.dev](https://ai.google.dev) |
+| Geoapify | Maps, geocoding, routing | [geoapify.com](https://geoapify.com) |
+| OpenWeatherMap | Weather data | [openweathermap.org](https://openweathermap.org) |
+| MongoDB Atlas | Database | [mongodb.com/atlas](https://mongodb.com/atlas) |
+
+---
+
+## Project Structure
+
+```
+SWETripPlanner/
+├── backend/
+│   ├── app.py          # Flask routes & API endpoints
+│   ├── services.py     # Business logic & AI functions
+│   └── requirements.txt
+├── static/
+│   ├── explore.html    # Main trip planning page
+│   ├── explore.js      # Frontend logic
+│   ├── explore.css     # Styles
+│   └── images/
+├── AI_FEATURES.md      # AI documentation
+├── MAP_FEATURES.md     # Map documentation
+└── README.md
+```
+
+---
+
+## License
+
+MIT

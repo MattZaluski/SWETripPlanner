@@ -76,14 +76,32 @@ load_dotenv()
 
 MOCK = os.getenv("MOCK", "true").lower() == "true"
 GEOAPIFY_KEY = os.getenv("GEOAPIFY_API_KEY")
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+client = OpenAI(api_key=os.getenv('OPENAI_API_KEY') or "dummy-key-for-startup")
 
-# MongoDB Configuration
+# MongoDB Configuration - with timeout and mock support
 MONGO_URI = os.getenv("MONGO_URI")
-mongo = MongoClient(MONGO_URI)
-db = mongo["Geo_Guide"]
-users_col = db["users"]
-itinerary_col = db["saved_itineraries"]
+if MOCK or not MONGO_URI:
+    # Use a mock/dummy MongoDB setup for testing
+    print("⚠️ Running in MOCK mode - MongoDB disabled")
+    mongo = None
+    db = None
+    users_col = None
+    itinerary_col = None
+else:
+    try:
+        mongo = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        db = mongo["Geo_Guide"]
+        users_col = db["users"]
+        itinerary_col = db["saved_itineraries"]
+        # Test connection
+        mongo.admin.command('ping')
+        print("✅ MongoDB connected")
+    except Exception as e:
+        print(f"⚠️ MongoDB connection failed: {e}")
+        mongo = None
+        db = None
+        users_col = None
+        itinerary_col = None
 
 # Configure Gemini
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'AIzaSyDW7M2_HtcbiA3FaOy1waVpqrmCl9CUXWY')
@@ -381,6 +399,87 @@ def fetch_places_from_geoapify(lat, lng, interests, max_distance, budget):
     
     return places
 
+
+def _estimate_route_fallback(waypoints, travel_mode):
+    """
+    Estimate route distance/time using Haversine formula when no Geoapify key.
+    This provides a reasonable approximation for MOCK mode or when API is unavailable.
+    Also generates interpolated geometry for map display.
+    """
+    import math
+    
+    def haversine(lat1, lon1, lat2, lon2):
+        """Calculate distance in km between two points."""
+        R = 6371  # Earth radius in km
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        return R * c
+    
+    def interpolate_points(lat1, lng1, lat2, lng2, num_points=5):
+        """Generate intermediate points between two coordinates for smoother lines."""
+        points = []
+        for i in range(num_points + 1):
+            t = i / num_points
+            lat = lat1 + t * (lat2 - lat1)
+            lng = lng1 + t * (lng2 - lng1)
+            # Add slight curve for more realistic appearance
+            curve = math.sin(t * math.pi) * 0.001  # Small offset
+            points.append([lng + curve, lat])
+        return points
+    
+    # Speed estimates by travel mode (km/h)
+    speed_map = {
+        "driving-car": 40,    # Urban driving average
+        "drive": 40,
+        "cycling-regular": 15,
+        "bicycle": 15,
+        "foot-walking": 5,
+        "walk": 5
+    }
+    speed_kmh = speed_map.get(travel_mode, 40)
+    
+    legs = []
+    total_distance = 0
+    total_time = 0
+    geometry = []  # Full route geometry
+    
+    for i in range(len(waypoints) - 1):
+        lat1, lng1 = waypoints[i]
+        lat2, lng2 = waypoints[i + 1]
+        
+        # Calculate straight-line distance
+        dist_km = haversine(lat1, lng1, lat2, lng2)
+        # Add 30% for road winding factor
+        road_dist_km = dist_km * 1.3
+        
+        time_min = (road_dist_km / speed_kmh) * 60
+        
+        # Generate interpolated geometry for this leg
+        leg_points = interpolate_points(lat1, lng1, lat2, lng2, num_points=8)
+        geometry.extend(leg_points)
+        
+        legs.append({
+            "distance_km": round(road_dist_km, 2),
+            "time_min": round(time_min, 1),
+            "from_index": i,
+            "to_index": i + 1,
+            "steps": []  # No turn-by-turn in fallback mode
+        })
+        
+        total_distance += road_dist_km
+        total_time += time_min
+    
+    return {
+        "total_distance_km": round(total_distance, 2),
+        "total_time_min": round(total_time, 1),
+        "legs": legs,
+        "geometry": geometry,  # Include geometry for map display
+        "estimated": True  # Flag to indicate this is an estimate
+    }
+
+
 def calculate_route(waypoints, travel_mode):
     """
     Calculate routing data between multiple waypoints using Geoapify Routing API.
@@ -394,7 +493,8 @@ def calculate_route(waypoints, travel_mode):
         Dictionary with route information including:
         - total_distance_km: Total distance in kilometers
         - total_time_min: Total time in minutes
-        - legs: List of leg data (distance and time for each segment)
+        - legs: List of leg data (distance, time, and geometry for each segment)
+        - geometry: Full route geometry as GeoJSON coordinates for map display
     """
     # Create cache key from waypoints and travel mode (round to 3 decimals)
     waypoints_key = "_".join([f"{round(lat, 3)},{round(lng, 3)}" for lat, lng in waypoints])
@@ -407,13 +507,16 @@ def calculate_route(waypoints, travel_mode):
     print(f"⚡ Cache miss: Calculating route")
     
     if not GEOAPIFY_KEY:
-        raise Exception("GEOAPIFY_API_KEY not set in .env")
+        # Return mock/estimated route data when no API key
+        print("⚠️ No GEOAPIFY_KEY - returning estimated route")
+        return _estimate_route_fallback(waypoints, travel_mode)
     
     if len(waypoints) < 2:
         return {
             "total_distance_km": 0,
             "total_time_min": 0,
-            "legs": []
+            "legs": [],
+            "geometry": []
         }
     
     # Convert travel mode from our format to Geoapify format
@@ -431,6 +534,7 @@ def calculate_route(waypoints, travel_mode):
     params = {
         "waypoints": waypoints_str,
         "mode": geoapify_mode,
+        "details": "instruction_details",  # Get turn-by-turn instructions
         "apiKey": GEOAPIFY_KEY
     }
     
@@ -446,7 +550,9 @@ def calculate_route(waypoints, travel_mode):
         if not features:
             raise Exception("No route found")
         
-        properties = features[0].get("properties", {})
+        feature = features[0]
+        properties = feature.get("properties", {})
+        geometry = feature.get("geometry", {})
         
         # Get total distance (in meters) and time (in seconds)
         total_distance_m = properties.get("distance", 0)
@@ -456,21 +562,44 @@ def calculate_route(waypoints, travel_mode):
         total_distance_km = total_distance_m / 1000
         total_time_min = total_time_s / 60
         
-        # Extract leg information
+        # Extract full route geometry (for drawing on map)
+        route_coordinates = []
+        if geometry.get("type") == "MultiLineString":
+            for line in geometry.get("coordinates", []):
+                route_coordinates.extend(line)
+        elif geometry.get("type") == "LineString":
+            route_coordinates = geometry.get("coordinates", [])
+        
+        # Extract leg information with geometry
         legs = []
         legs_data = properties.get("legs", [])
-        for leg in legs_data:
+        for i, leg in enumerate(legs_data):
             leg_distance_m = leg.get("distance", 0)
             leg_time_s = leg.get("time", 0)
+            
+            # Get turn-by-turn steps for this leg
+            steps = []
+            for step in leg.get("steps", []):
+                instruction = step.get("instruction", {})
+                steps.append({
+                    "instruction": instruction.get("text", ""),
+                    "distance_m": step.get("distance", 0),
+                    "time_s": step.get("time", 0)
+                })
+            
             legs.append({
-                "distance_km": leg_distance_m / 1000,
-                "time_min": leg_time_s / 60
+                "distance_km": round(leg_distance_m / 1000, 2),
+                "time_min": round(leg_time_s / 60, 1),
+                "from_index": i,
+                "to_index": i + 1,
+                "steps": steps[:5]  # Limit to first 5 instructions per leg
             })
         
         result = {
             "total_distance_km": round(total_distance_km, 2),
             "total_time_min": round(total_time_min, 1),
-            "legs": legs
+            "legs": legs,
+            "geometry": route_coordinates  # Full route geometry for map
         }
         
         # Cache the result
@@ -481,11 +610,7 @@ def calculate_route(waypoints, travel_mode):
     except Exception as e:
         print(f"Routing error: {e}")
         # Return fallback data (don't cache errors)
-        return {
-            "total_distance_km": 0,
-            "total_time_min": 0,
-            "legs": []
-        }
+        return _estimate_route_fallback(waypoints, travel_mode)
 
 def calculate_travel_time_from_start(start_lat, start_lng, places, travel_mode):
     """
@@ -850,6 +975,44 @@ def plan_trip(data):
         weather = MOCK_WEATHER
         travel_times = MOCK_TRAVEL_TIMES
         lat, lng = 42.36, -71.06
+        
+        # In MOCK mode, add default scores and reasons without calling LLM
+        for place in places:
+            place['relevance_score'] = 85
+            place['matched_reason'] = f"Great match for your interests! {place['name']} is a popular local destination."
+            place['is_outdoor'] = place.get('type') in ['park', 'beach', 'nature']
+            place['weather_warning'] = None
+            place['travel_time_min'] = travel_times.get(place['id'], 10)
+        
+        # In MOCK mode, create a simple itinerary without calling LLM
+        polished_itinerary = []
+        for i, place in enumerate(places[:5]):  # Limit to 5 items
+            polished_itinerary.append({
+                "name": place['name'],
+                "reason": place['matched_reason'],
+                "time": f"{9 + i}:00 AM",
+                "lat": place.get('lat'),
+                "lng": place.get('lng'),
+                "address": place.get('address', 'Address not available'),
+                "street": place.get('street', ''),
+                "city": place.get('city', ''),
+                "state": place.get('state', ''),
+                "country": place.get('country', ''),
+                "cost": place.get('cost', 'low'),
+                "distance_km": 5,
+                "travel_time_min": travel_times.get(place['id'], 10),
+                "relevance_score": place['relevance_score'],
+                "matched_reason": place['matched_reason'],
+                "is_outdoor": place.get('is_outdoor', False),
+                "weather_warning": None
+            })
+        
+        return {
+            "itinerary": polished_itinerary,
+            "weather": weather,
+            "places": places,
+            "starting_coords": {"lat": lat, "lng": lng}
+        }
     else:
         # resolve starting address to coords
         lat, lng = geocode_address(prefs["starting_address"])
@@ -867,50 +1030,50 @@ def plan_trip(data):
         weather = fetch_weather_from_openmeteo(lat, lng)
         travel_times = {place['id']: place.get('travel_time_min', 10) for place in places}
     
-    # Score activities with LLM - pass weather only if use_weather is enabled
-    weather_for_scoring = weather if prefs["use_weather"] else None
-    activity_scores = score_activities_with_llm(prefs, places, weather_for_scoring)
-    
-    # Add relevance scores, matched reasons, and weather info to each place
-    for place in places:
-        place_name = place.get('name')
-        if place_name in activity_scores:
-            place['relevance_score'] = activity_scores[place_name].get('relevance_score', 50)
-            place['matched_reason'] = activity_scores[place_name].get('matched_reason', 'A great local experience.')
-            place['is_outdoor'] = activity_scores[place_name].get('is_outdoor', False)
-            place['weather_warning'] = activity_scores[place_name].get('weather_warning', None)
-        else:
-            place['relevance_score'] = 50
-            place['matched_reason'] = 'An interesting activity to explore.'
-            place['is_outdoor'] = False
-            place['weather_warning'] = None
-    
-    # Sort places by relevance score (highest first)
-    places_sorted = sorted(places, key=lambda x: x.get('relevance_score', 0), reverse=True)
-    
-    polished_itinerary = call_llm(prefs, places_sorted, weather, travel_times)
-    
-    # Add lat/lng, distance, address info, and weather warnings to itinerary items by matching names
-    for item in polished_itinerary:
-        matching_place = next((p for p in places_sorted if p['name'] == item['name']), None)
-        if matching_place:
-            item['lat'] = matching_place.get('lat')
-            item['lng'] = matching_place.get('lng')
-            item['distance_km'] = matching_place.get('distance_km', 0)
-            item['address'] = matching_place.get('address', 'Address not available')
-            item['street'] = matching_place.get('street', '')
-            item['city'] = matching_place.get('city', '')
-            item['state'] = matching_place.get('state', '')
-            item['country'] = matching_place.get('country', '')
-            item['is_outdoor'] = matching_place.get('is_outdoor', False)
-            item['weather_warning'] = matching_place.get('weather_warning', None)
-    
-    return {
-        "itinerary": polished_itinerary,
-        "weather": weather,
-        "places": places_sorted,
-        "starting_coords": {"lat": lat, "lng": lng}
-    }
+        # Score activities with LLM - pass weather only if use_weather is enabled
+        weather_for_scoring = weather if prefs["use_weather"] else None
+        activity_scores = score_activities_with_llm(prefs, places, weather_for_scoring)
+        
+        # Add relevance scores, matched reasons, and weather info to each place
+        for place in places:
+            place_name = place.get('name')
+            if place_name in activity_scores:
+                place['relevance_score'] = activity_scores[place_name].get('relevance_score', 50)
+                place['matched_reason'] = activity_scores[place_name].get('matched_reason', 'A great local experience.')
+                place['is_outdoor'] = activity_scores[place_name].get('is_outdoor', False)
+                place['weather_warning'] = activity_scores[place_name].get('weather_warning', None)
+            else:
+                place['relevance_score'] = 50
+                place['matched_reason'] = 'An interesting activity to explore.'
+                place['is_outdoor'] = False
+                place['weather_warning'] = None
+        
+        # Sort places by relevance score (highest first)
+        places_sorted = sorted(places, key=lambda x: x.get('relevance_score', 0), reverse=True)
+        
+        polished_itinerary = call_llm(prefs, places_sorted, weather, travel_times)
+        
+        # Add lat/lng, distance, address info, and weather warnings to itinerary items by matching names
+        for item in polished_itinerary:
+            matching_place = next((p for p in places_sorted if p['name'] == item['name']), None)
+            if matching_place:
+                item['lat'] = matching_place.get('lat')
+                item['lng'] = matching_place.get('lng')
+                item['distance_km'] = matching_place.get('distance_km', 0)
+                item['address'] = matching_place.get('address', 'Address not available')
+                item['street'] = matching_place.get('street', '')
+                item['city'] = matching_place.get('city', '')
+                item['state'] = matching_place.get('state', '')
+                item['country'] = matching_place.get('country', '')
+                item['is_outdoor'] = matching_place.get('is_outdoor', False)
+                item['weather_warning'] = matching_place.get('weather_warning', None)
+        
+        return {
+            "itinerary": polished_itinerary,
+            "weather": weather,
+            "places": places_sorted,
+            "starting_coords": {"lat": lat, "lng": lng}
+        }
 
 def plan_trip_smart(data):
     """
@@ -933,6 +1096,54 @@ def plan_trip_smart(data):
         places = MOCK_PLACES
         weather = MOCK_WEATHER
         lat, lng = 42.36, -71.06
+        
+        # In MOCK mode, add default scores and create mock itinerary without LLM calls
+        for place in places:
+            place['relevance_score'] = 85
+            place['matched_reason'] = f"Great match for your interests! {place['name']} is a popular local destination."
+            place['is_outdoor'] = place.get('type') in ['park', 'beach', 'nature']
+            place['weather_warning'] = None
+            place['travel_time_min'] = 10
+            place['distance_km'] = 5
+        
+        # Create mock smart itinerary
+        smart_itinerary = []
+        current_hour = int(start_time.split(':')[0])
+        for i, place in enumerate(places[:4]):
+            smart_itinerary.append({
+                "time": f"{current_hour}:00 {'AM' if current_hour < 12 else 'PM'}",
+                "name": place['name'],
+                "duration": "1.5 hours",
+                "cost": "$15.00" if place.get('cost') != 'free' else "Free",
+                "reason": place['matched_reason'],
+                "travel_time_min": 10,
+                "lat": place.get('lat'),
+                "lng": place.get('lng'),
+                "address": place.get('address', 'Address not available'),
+                "street": place.get('street', ''),
+                "city": place.get('city', ''),
+                "state": place.get('state', ''),
+                "country": place.get('country', ''),
+                "relevance_score": place['relevance_score'],
+                "matched_reason": place['matched_reason'],
+                "is_outdoor": place.get('is_outdoor', False),
+                "weather_warning": None
+            })
+            current_hour += 2
+        
+        # Calculate totals
+        total_cost = sum(15.0 if item['cost'] != 'Free' else 0 for item in smart_itinerary)
+        total_time = len(smart_itinerary) * 1.5 + len(smart_itinerary) * 0.25  # activity time + travel
+        
+        return {
+            "itinerary": smart_itinerary,
+            "places": places,
+            "starting_coords": {"lat": lat, "lng": lng},
+            "total_cost": total_cost,
+            "total_time_hours": total_time,
+            "weather": weather,
+            "all_activities": places
+        }
     else:
         # resolve starting address to coords
         lat, lng = geocode_address(prefs["starting_address"])
@@ -949,119 +1160,121 @@ def plan_trip_smart(data):
         # Fetch real weather data from Open-Meteo
         weather = fetch_weather_from_openmeteo(lat, lng)
     
-    # Call enhanced LLM with time constraints
-    smart_itinerary = call_llm_smart(prefs, places, weather, start_time, end_time)
-    
-    # Score activities - pass weather only if use_weather is enabled
-    weather_for_scoring = weather if prefs["use_weather"] else None
-    activity_scores = score_activities_with_llm(prefs, places, weather_for_scoring)
-    
-    # Prepare all activities with scores for browsing (sorted by relevance)
-    all_activities = []
-    for place in places:
-        place_name = place.get('name')
-        if place_name in activity_scores:
-            place['relevance_score'] = activity_scores[place_name].get('relevance_score', 50)
-            place['matched_reason'] = activity_scores[place_name].get('matched_reason', 'A great local experience.')
-            place['is_outdoor'] = activity_scores[place_name].get('is_outdoor', False)
-            place['weather_warning'] = activity_scores[place_name].get('weather_warning', None)
-        else:
-            place['relevance_score'] = 50
-            place['matched_reason'] = 'An interesting activity to explore.'
-            place['is_outdoor'] = False
-            place['weather_warning'] = None
-        all_activities.append(place)
-    
-    # Sort by relevance score
-    all_activities_sorted = sorted(all_activities, key=lambda x: x.get('relevance_score', 0), reverse=True)
-    
-    # Add lat/lng, distance info, address, relevance scoring, and weather info to itinerary items by matching names
-    for item in smart_itinerary:
-        matching_place = next((p for p in places if p['name'] == item['name']), None)
-        if matching_place:
-            item['lat'] = matching_place.get('lat')
-            item['lng'] = matching_place.get('lng')
-            item['distance_km'] = matching_place.get('distance_km', 0)
-            item['address'] = matching_place.get('address', 'Address not available')
-            item['street'] = matching_place.get('street', '')
-            item['city'] = matching_place.get('city', '')
-            item['state'] = matching_place.get('state', '')
-            item['country'] = matching_place.get('country', '')
-        else:
-            # If no exact match, try to find a similar place or use defaults
-            item['lat'] = None
-            item['lng'] = None
-            item['distance_km'] = 0
-            item['address'] = 'Address not available'
-            item['street'] = ''
-            item['city'] = ''
-            item['state'] = ''
-            item['country'] = ''
+        # Call enhanced LLM with time constraints
+        smart_itinerary = call_llm_smart(prefs, places, weather, start_time, end_time)
         
-        # Add relevance score, matched_reason, and weather info for consistency
-        item_name = item.get('name')
-        if item_name in activity_scores:
-            item['relevance_score'] = activity_scores[item_name].get('relevance_score', 50)
-            item['matched_reason'] = activity_scores[item_name].get('matched_reason', item.get('reason', 'A great activity to enjoy.'))
-            item['is_outdoor'] = activity_scores[item_name].get('is_outdoor', False)
-            item['weather_warning'] = activity_scores[item_name].get('weather_warning', None)
-        else:
-            item['relevance_score'] = 50
-            item['matched_reason'] = item.get('reason', 'A great activity to enjoy.')
-            item['is_outdoor'] = False
-            item['weather_warning'] = None
+        # Score activities - pass weather only if use_weather is enabled
+        weather_for_scoring = weather if prefs["use_weather"] else None
+        activity_scores = score_activities_with_llm(prefs, places, weather_for_scoring)
+        
+        # Prepare all activities with scores for browsing (sorted by relevance)
+        all_activities = []
+        for place in places:
+            place_name = place.get('name')
+            if place_name in activity_scores:
+                place['relevance_score'] = activity_scores[place_name].get('relevance_score', 50)
+                place['matched_reason'] = activity_scores[place_name].get('matched_reason', 'A great local experience.')
+                place['is_outdoor'] = activity_scores[place_name].get('is_outdoor', False)
+                place['weather_warning'] = activity_scores[place_name].get('weather_warning', None)
+            else:
+                place['relevance_score'] = 50
+                place['matched_reason'] = 'An interesting activity to explore.'
+                place['is_outdoor'] = False
+                place['weather_warning'] = None
+            all_activities.append(place)
+        
+        # Sort by relevance score
+        all_activities_sorted = sorted(all_activities, key=lambda x: x.get('relevance_score', 0), reverse=True)
+        
+        # Add lat/lng, distance info, address, relevance scoring, and weather info to itinerary items by matching names
+        for item in smart_itinerary:
+            matching_place = next((p for p in places if p['name'] == item['name']), None)
+            if matching_place:
+                item['lat'] = matching_place.get('lat')
+                item['lng'] = matching_place.get('lng')
+                item['distance_km'] = matching_place.get('distance_km', 0)
+                item['address'] = matching_place.get('address', 'Address not available')
+                item['street'] = matching_place.get('street', '')
+                item['city'] = matching_place.get('city', '')
+                item['state'] = matching_place.get('state', '')
+                item['country'] = matching_place.get('country', '')
+            else:
+                # If no exact match, try to find a similar place or use defaults
+                item['lat'] = None
+                item['lng'] = None
+                item['distance_km'] = 0
+                item['address'] = 'Address not available'
+                item['street'] = ''
+                item['city'] = ''
+                item['state'] = ''
+                item['country'] = ''
+            
+            # Add relevance score, matched_reason, and weather info for consistency
+            item_name = item.get('name')
+            if item_name in activity_scores:
+                item['relevance_score'] = activity_scores[item_name].get('relevance_score', 50)
+                item['matched_reason'] = activity_scores[item_name].get('matched_reason', item.get('reason', 'A great activity to enjoy.'))
+                item['is_outdoor'] = activity_scores[item_name].get('is_outdoor', False)
+                item['weather_warning'] = activity_scores[item_name].get('weather_warning', None)
+            else:
+                item['relevance_score'] = 50
+                item['matched_reason'] = item.get('reason', 'A great activity to enjoy.')
+                item['is_outdoor'] = False
+                item['weather_warning'] = None
     
-    # Calculate total cost, activity time, and travel time separately
-    total_cost = 0
-    total_activity_hours = 0
-    total_travel_minutes = 0
-    
-    for item in smart_itinerary:
-        # Parse cost
-        cost_str = item.get('cost', 'Free')
-        if cost_str != 'Free' and '$' in cost_str:
+        # Calculate total cost, activity time, and travel time separately
+        total_cost = 0
+        total_activity_hours = 0
+        total_travel_minutes = 0
+        
+        for item in smart_itinerary:
+            # Parse cost
+            cost_str = item.get('cost', 'Free')
+            if cost_str != 'Free' and '$' in cost_str:
+                try:
+                    cost_value = float(cost_str.replace('$', '').replace(',', ''))
+                    total_cost += cost_value
+                except ValueError:
+                    pass
+            
+            # Parse activity duration
+            duration_str = item.get('duration', '0 hours')
             try:
-                cost_value = float(cost_str.replace('$', '').replace(',', ''))
-                total_cost += cost_value
+                if 'hour' in duration_str:
+                    hours = float(duration_str.split('hour')[0].strip())
+                    total_activity_hours += hours
+                elif 'minute' in duration_str:
+                    minutes = float(duration_str.split('minute')[0].strip())
+                    total_activity_hours += minutes / 60
             except ValueError:
                 pass
+            
+            # Add travel time separately
+            travel_min = item.get('travel_time_min', 0)
+            total_travel_minutes += travel_min
         
-        # Parse activity duration
-        duration_str = item.get('duration', '0 hours')
-        try:
-            if 'hour' in duration_str:
-                hours = float(duration_str.split('hour')[0].strip())
-                total_activity_hours += hours
-            elif 'minute' in duration_str:
-                minutes = float(duration_str.split('minute')[0].strip())
-                total_activity_hours += minutes / 60
-        except ValueError:
-            pass
+        # Calculate total time (activity + travel)
+        total_time_hours = total_activity_hours + (total_travel_minutes / 60)
         
-        # Add travel time separately
-        travel_min = item.get('travel_time_min', 0)
-        total_travel_minutes += travel_min
-    
-    # Calculate total time (activity + travel)
-    total_time_hours = total_activity_hours + (total_travel_minutes / 60)
-    
-    return {
-        "itinerary": smart_itinerary,
-        "all_activities": all_activities_sorted,  # NEW: Full list for browsing
-        "weather": weather,
-        "places": places,
-        "starting_coords": {"lat": lat, "lng": lng},
-        "total_cost": round(total_cost, 2),
-        "total_time_hours": round(total_time_hours, 2),
-        "total_activity_hours": round(total_activity_hours, 2),
-        "total_travel_hours": round(total_travel_minutes / 60, 2)
-    }
+        return {
+            "itinerary": smart_itinerary,
+            "all_activities": all_activities_sorted,  # Full list for browsing
+            "weather": weather,
+            "places": places,
+            "starting_coords": {"lat": lat, "lng": lng},
+            "total_cost": round(total_cost, 2),
+            "total_time_hours": round(total_time_hours, 2),
+            "total_activity_hours": round(total_activity_hours, 2),
+            "total_travel_hours": round(total_travel_minutes / 60, 2)
+        }
 
 #=====================================================
 #                  USER AUTHENTICATION
 # =====================================================
 
 def register_user(first_name, last_name, email, password):
+    if not users_col:
+        return {"error": "Database not available (MOCK mode)"}
     if users_col.find_one({"email": email}):
         return {"error": "Email already exists"}
 
@@ -1085,6 +1298,8 @@ def register_user(first_name, last_name, email, password):
 
 
 def login_user(email, password):
+    if not users_col:
+        return {"error": "Database not available (MOCK mode)"}
     user = users_col.find_one({"email": email})
     if not user:
         return {"error": "User not found"}
@@ -1105,6 +1320,8 @@ def login_user(email, password):
 
 
 def logout_user(session_token):
+    if not users_col:
+        return {"error": "Database not available (MOCK mode)"}
     user = users_col.find_one({"session_token": session_token})
     if not user:
         return {"error": "Invalid session"}
@@ -1117,10 +1334,19 @@ def logout_user(session_token):
     return {"success": True}
 
 def get_user_by_session_token(session_token):
+    if not users_col:
+        return None
     user = users_col.find_one({"session_token": session_token})
     return user
 
 def save_itinerary_service(data):
+    if not itinerary_col:
+        # MOCK mode - simulate saving and return a fake trip ID
+        import uuid
+        mock_trip_id = str(uuid.uuid4())
+        print(f"📝 MOCK: Simulating save with trip_id={mock_trip_id}")
+        return {"status": "success", "trip_id": mock_trip_id, "mock": True}
+    
     trip_doc = {
         "user_id": data.get("user_id"),  # optional
         "starting_address": data.get("starting_address"),
@@ -1136,6 +1362,8 @@ def save_itinerary_service(data):
     return {"status": "success", "trip_id": result.inserted_id}
 
 def get_trips(user_id=None):
+    if not itinerary_col:
+        return []
     query = {}
     if user_id:
         query["user_id"] = user_id
@@ -1146,3 +1374,904 @@ def get_trips(user_id=None):
     for t in trips:
         t["_id"] = str(t["_id"])
     return trips
+
+
+# ============== AI ENHANCEMENT FEATURES ==============
+
+# Cache for AI-generated content
+ai_summary_cache = SimpleCache()
+ai_alternatives_cache = SimpleCache()
+ai_narration_cache = SimpleCache()
+user_preferences_cache = SimpleCache()
+
+AI_SUMMARY_TTL = 4 * 60 * 60       # 4 hours - summaries don't change
+AI_ALTERNATIVES_TTL = 2 * 60 * 60  # 2 hours
+AI_NARRATION_TTL = 4 * 60 * 60     # 4 hours
+USER_PREFS_TTL = 24 * 60 * 60      # 24 hours
+
+
+# ============== FEATURE 1: CONVERSATIONAL AI ASSISTANT ==============
+
+def chat_with_assistant(conversation_history, user_message, context=None):
+    """
+    AI-powered conversational trip planning assistant.
+    Maintains conversation history for context-aware responses.
+    
+    Args:
+        conversation_history: List of previous messages [{"role": "user/assistant", "content": "..."}]
+        user_message: The new user message
+        context: Optional context dict with {location, interests, budget, current_itinerary}
+    
+    Returns:
+        {
+            "response": "AI response text",
+            "suggestions": ["activity1", "activity2"],  # Optional extracted suggestions
+            "action": "add_activity" | "remove_activity" | "reorder" | "info" | None
+        }
+    """
+    if MOCK:
+        # Return mock response for testing
+        mock_responses = [
+            "That sounds like a great idea! I'd recommend checking out the local museum district.",
+            "For hidden gems, try the vintage bookshops on Oak Street - they're beloved by locals!",
+            "Based on your interests, I think you'd love the farmer's market on Saturday mornings.",
+            "Good choice! That area has excellent cafes for a mid-morning break.",
+        ]
+        import random
+        return {
+            "response": random.choice(mock_responses),
+            "suggestions": ["Local Museum", "Oak Street Bookshops", "Farmer's Market"],
+            "action": None
+        }
+    
+    # Build context-aware system prompt
+    context_info = ""
+    if context:
+        if context.get("location"):
+            context_info += f"\nUser's location: {context['location']}"
+        if context.get("interests"):
+            context_info += f"\nUser's interests: {', '.join(context['interests'])}"
+        if context.get("budget"):
+            context_info += f"\nBudget level: {context['budget']}"
+        if context.get("current_itinerary"):
+            itinerary_names = [item.get("name", "Unknown") for item in context["current_itinerary"]]
+            context_info += f"\nCurrent itinerary: {', '.join(itinerary_names)}"
+    
+    system_prompt = f"""You are a friendly, knowledgeable trip planning assistant for a travel app called Geo Guide.
+Your personality: Enthusiastic about travel, helpful, concise, and creative.
+
+Your capabilities:
+1. Suggest activities, restaurants, and attractions based on user preferences
+2. Help users refine their itineraries
+3. Provide local tips and hidden gems
+4. Answer questions about destinations
+5. Make budget-conscious recommendations
+
+{context_info}
+
+Guidelines:
+- Keep responses concise (2-4 sentences typically)
+- Be specific with suggestions (name actual types of places)
+- If suggesting activities, format them clearly
+- Be conversational and friendly
+- If you suggest specific activities, include them in a JSON block at the end like:
+  ```suggestions
+  ["Activity Name 1", "Activity Name 2"]
+  ```
+
+Remember: You're helping plan a day trip, so focus on practical, actionable advice."""
+
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    # Add conversation history (limit to last 10 messages for token efficiency)
+    for msg in conversation_history[-10:]:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    
+    # Add new user message
+    messages.append({"role": "user", "content": user_message})
+    
+    try:
+        response = call_llm_with_fallback("gpt-4o-mini", messages, temperature=0.8)
+        response_text = response.choices[0].message.content.strip()
+        
+        # Extract suggestions if present
+        suggestions = []
+        action = None
+        
+        if "```suggestions" in response_text:
+            try:
+                import re
+                match = re.search(r'```suggestions\s*\n(.*?)\n```', response_text, re.DOTALL)
+                if match:
+                    suggestions = json.loads(match.group(1))
+                    response_text = re.sub(r'```suggestions.*?```', '', response_text, flags=re.DOTALL).strip()
+            except:
+                pass
+        
+        # Detect action intent
+        lower_text = user_message.lower()
+        if any(word in lower_text for word in ["add", "include", "put"]):
+            action = "add_activity"
+        elif any(word in lower_text for word in ["remove", "delete", "drop"]):
+            action = "remove_activity"
+        elif any(word in lower_text for word in ["reorder", "move", "swap"]):
+            action = "reorder"
+        
+        return {
+            "response": response_text,
+            "suggestions": suggestions,
+            "action": action
+        }
+    
+    except Exception as e:
+        print(f"Chat error: {e}")
+        return {
+            "response": "I'm having trouble connecting right now. Please try again in a moment!",
+            "suggestions": [],
+            "action": None
+        }
+
+
+# ============== FEATURE 2: AI ACTIVITY SUMMARIZATION ==============
+
+def summarize_activity(activity, user_interests=None):
+    """
+    Generate a compelling, personalized summary for an activity.
+    
+    Args:
+        activity: Dict with activity info (name, category, address, etc.)
+        user_interests: Optional list of user interests for personalization
+    
+    Returns:
+        {
+            "summary": "2-3 sentence engaging description",
+            "highlights": ["highlight1", "highlight2"],
+            "best_for": "Couples, art enthusiasts"
+        }
+    """
+    activity_name = activity.get("name", "Unknown")
+    
+    # Check cache
+    interests_key = "-".join(sorted(user_interests or []))
+    cache_key = hashlib.md5(f"summary_{activity_name}_{interests_key}".encode()).hexdigest()
+    cached = ai_summary_cache.get(cache_key)
+    if cached:
+        return cached
+    
+    if MOCK:
+        result = {
+            "summary": f"{activity_name} is a must-visit destination that offers a unique experience for every visitor. Perfect for exploring local culture and making lasting memories.",
+            "highlights": ["Unique atmosphere", "Local favorite", "Great for photos"],
+            "best_for": "Everyone"
+        }
+        ai_summary_cache.set(cache_key, result, AI_SUMMARY_TTL)
+        return result
+    
+    # Build personalization context
+    personalization = ""
+    if user_interests:
+        personalization = f"The user is interested in: {', '.join(user_interests)}. Tailor the description to their interests."
+    
+    prompt = f"""Generate an engaging summary for this activity/place:
+
+Name: {activity_name}
+Category: {activity.get('category', 'Attraction')}
+Address: {activity.get('address', 'N/A')}
+{personalization}
+
+Provide:
+1. A compelling 2-3 sentence summary that makes someone want to visit
+2. 3 key highlights (short phrases)
+3. Who it's best for (e.g., "Couples", "Families", "Solo travelers")
+
+Return as JSON:
+{{
+    "summary": "...",
+    "highlights": ["...", "...", "..."],
+    "best_for": "..."
+}}
+Return ONLY the JSON, no other text."""
+
+    messages = [
+        {"role": "system", "content": "You are a travel writer creating engaging place descriptions. Be vivid but concise."},
+        {"role": "user", "content": prompt}
+    ]
+    
+    try:
+        response = call_llm_with_fallback("gpt-4o-mini", messages, temperature=0.7)
+        response_text = response.choices[0].message.content.strip()
+        
+        # Clean up JSON
+        if response_text.startswith("```"):
+            response_text = response_text.split("```")[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+        
+        result = json.loads(response_text)
+        ai_summary_cache.set(cache_key, result, AI_SUMMARY_TTL)
+        return result
+    
+    except Exception as e:
+        print(f"Summary error: {e}")
+        result = {
+            "summary": f"{activity_name} is a popular destination worth exploring.",
+            "highlights": ["Local favorite"],
+            "best_for": "Everyone"
+        }
+        return result
+
+
+def summarize_activities_batch(activities, user_interests=None):
+    """
+    Generate summaries for multiple activities in a single LLM call (more efficient).
+    
+    Args:
+        activities: List of activity dicts
+        user_interests: Optional list of user interests
+    
+    Returns:
+        Dict mapping activity names to their summaries
+    """
+    if not activities:
+        return {}
+    
+    # Check which ones are cached
+    results = {}
+    uncached = []
+    interests_key = "-".join(sorted(user_interests or []))
+    
+    for activity in activities:
+        name = activity.get("name", "Unknown")
+        cache_key = hashlib.md5(f"summary_{name}_{interests_key}".encode()).hexdigest()
+        cached = ai_summary_cache.get(cache_key)
+        if cached:
+            results[name] = cached
+        else:
+            uncached.append(activity)
+    
+    if not uncached:
+        return results
+    
+    if MOCK:
+        for activity in uncached:
+            name = activity.get("name", "Unknown")
+            results[name] = {
+                "summary": f"{name} offers a wonderful experience for visitors seeking adventure and discovery.",
+                "highlights": ["Must-see attraction", "Local gem", "Unique experience"],
+                "best_for": "All travelers"
+            }
+        return results
+    
+    # Batch summarize uncached activities
+    activities_text = "\n".join([
+        f"- {a.get('name', 'Unknown')} ({a.get('category', 'Attraction')})"
+        for a in uncached[:10]  # Limit to 10 at a time
+    ])
+    
+    personalization = ""
+    if user_interests:
+        personalization = f"User interests: {', '.join(user_interests)}"
+    
+    prompt = f"""Generate engaging summaries for these places:
+
+{activities_text}
+
+{personalization}
+
+For EACH place, provide:
+- summary: 2-3 compelling sentences
+- highlights: 3 short highlight phrases
+- best_for: Target audience
+
+Return as JSON object with place names as keys:
+{{
+    "Place Name": {{
+        "summary": "...",
+        "highlights": ["...", "...", "..."],
+        "best_for": "..."
+    }}
+}}
+Return ONLY the JSON."""
+
+    messages = [
+        {"role": "system", "content": "You are a travel writer. Create engaging, varied descriptions."},
+        {"role": "user", "content": prompt}
+    ]
+    
+    try:
+        response = call_llm_with_fallback("gpt-4o-mini", messages, temperature=0.7)
+        response_text = response.choices[0].message.content.strip()
+        
+        if response_text.startswith("```"):
+            response_text = response_text.split("```")[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+        
+        batch_results = json.loads(response_text)
+        
+        # Cache and add to results
+        for name, summary in batch_results.items():
+            cache_key = hashlib.md5(f"summary_{name}_{interests_key}".encode()).hexdigest()
+            ai_summary_cache.set(cache_key, summary, AI_SUMMARY_TTL)
+            results[name] = summary
+        
+        return results
+    
+    except Exception as e:
+        print(f"Batch summary error: {e}")
+        # Return basic summaries for uncached
+        for activity in uncached:
+            name = activity.get("name", "Unknown")
+            results[name] = {
+                "summary": f"{name} is worth visiting during your trip.",
+                "highlights": ["Notable destination"],
+                "best_for": "Travelers"
+            }
+        return results
+
+
+# ============== FEATURE 3: AI ROUTE NARRATION ==============
+
+def generate_route_narration(itinerary, starting_location, travel_mode="driving-car"):
+    """
+    Generate an engaging narration script for the route animation.
+    Creates descriptive text for each segment of the journey.
+    
+    Args:
+        itinerary: List of activity dicts in order
+        starting_location: Starting address/location string
+        travel_mode: "driving-car", "foot-walking", or "cycling-regular"
+    
+    Returns:
+        {
+            "intro": "Welcome to your trip...",
+            "segments": [
+                {"from": "Start", "to": "Museum", "narration": "...", "duration_sec": 5},
+                ...
+            ],
+            "outro": "Enjoy your adventure..."
+        }
+    """
+    if not itinerary:
+        return {"intro": "", "segments": [], "outro": ""}
+    
+    # Check cache
+    itinerary_key = "-".join([item.get("name", "")[:20] for item in itinerary])
+    cache_key = hashlib.md5(f"narration_{itinerary_key}_{travel_mode}".encode()).hexdigest()
+    cached = ai_narration_cache.get(cache_key)
+    if cached:
+        return cached
+    
+    travel_verb = {
+        "driving-car": "drive",
+        "foot-walking": "walk", 
+        "cycling-regular": "bike"
+    }.get(travel_mode, "travel")
+    
+    if MOCK:
+        segments = []
+        prev_name = "your starting point"
+        for i, item in enumerate(itinerary):
+            name = item.get("name", f"Stop {i+1}")
+            travel_time = item.get("travel_time_min", 10)
+            segments.append({
+                "from": prev_name,
+                "to": name,
+                "narration": f"Next, {travel_verb} {travel_time} minutes to {name}, a wonderful spot to explore.",
+                "duration_sec": 4
+            })
+            prev_name = name
+        
+        result = {
+            "intro": f"Welcome to your adventure! Starting from {starting_location}, you'll discover amazing places.",
+            "segments": segments,
+            "outro": "That concludes your trip! We hope you have an amazing time exploring."
+        }
+        ai_narration_cache.set(cache_key, result, AI_NARRATION_TTL)
+        return result
+    
+    # Build itinerary description for LLM
+    stops_text = []
+    for i, item in enumerate(itinerary):
+        stops_text.append(f"{i+1}. {item.get('name', 'Unknown')} - {item.get('travel_time_min', '?')} min {travel_verb}")
+    
+    prompt = f"""Create an engaging audio narration script for a trip route animation.
+
+Starting Location: {starting_location}
+Travel Mode: {travel_verb.capitalize()}ing
+Stops:
+{chr(10).join(stops_text)}
+
+Create a script with:
+1. intro: A welcoming 1-2 sentence introduction (spoken as they start)
+2. segments: For each leg of the journey, a brief narration (1-2 sentences) that:
+   - References the travel time
+   - Builds excitement for the destination
+   - Mentions something interesting about the area or destination
+3. outro: A brief closing (1-2 sentences)
+
+Tone: Friendly tour guide, enthusiastic but not over-the-top.
+
+Return as JSON:
+{{
+    "intro": "...",
+    "segments": [
+        {{"from": "Start", "to": "Place Name", "narration": "...", "duration_sec": 5}},
+        ...
+    ],
+    "outro": "..."
+}}
+
+duration_sec should be based on narration length (roughly 2 seconds per sentence).
+Return ONLY the JSON."""
+
+    messages = [
+        {"role": "system", "content": "You are a friendly, engaging tour guide narrator."},
+        {"role": "user", "content": prompt}
+    ]
+    
+    try:
+        response = call_llm_with_fallback("gpt-4o-mini", messages, temperature=0.8)
+        response_text = response.choices[0].message.content.strip()
+        
+        if response_text.startswith("```"):
+            response_text = response_text.split("```")[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+        
+        result = json.loads(response_text)
+        ai_narration_cache.set(cache_key, result, AI_NARRATION_TTL)
+        return result
+    
+    except Exception as e:
+        print(f"Narration error: {e}")
+        # Return basic narration
+        segments = []
+        prev = "your starting point"
+        for item in itinerary:
+            name = item.get("name", "the next stop")
+            segments.append({
+                "from": prev,
+                "to": name,
+                "narration": f"Heading to {name} next.",
+                "duration_sec": 3
+            })
+            prev = name
+        
+        return {
+            "intro": f"Welcome! Let's explore starting from {starting_location}.",
+            "segments": segments,
+            "outro": "Enjoy your trip!"
+        }
+
+
+# ============== FEATURE 4: PREFERENCE LEARNING ==============
+
+# In-memory preference store (in production, use MongoDB)
+user_preference_store = {}
+
+def update_user_preferences(user_id, action, activity):
+    """
+    Track user preferences based on their actions.
+    
+    Args:
+        user_id: User identifier
+        action: "add", "remove", "complete", "skip"
+        activity: Activity dict that was acted upon
+    
+    Returns:
+        Updated preference profile
+    """
+    if not user_id:
+        return None
+    
+    # Initialize user profile if needed
+    if user_id not in user_preference_store:
+        user_preference_store[user_id] = {
+            "liked_categories": {},    # category -> count
+            "disliked_categories": {}, # category -> count
+            "preferred_price_range": [],
+            "activity_history": [],
+            "total_interactions": 0
+        }
+    
+    profile = user_preference_store[user_id]
+    category = activity.get("category", "unknown")
+    cost = activity.get("cost", "medium")
+    
+    if action == "add":
+        # User is interested in this type
+        profile["liked_categories"][category] = profile["liked_categories"].get(category, 0) + 1
+        profile["activity_history"].append({
+            "name": activity.get("name"),
+            "category": category,
+            "action": "added",
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    elif action == "remove":
+        # User removed from itinerary - slight negative signal
+        profile["disliked_categories"][category] = profile["disliked_categories"].get(category, 0) + 0.5
+    elif action == "complete":
+        # User completed the activity - strong positive signal
+        profile["liked_categories"][category] = profile["liked_categories"].get(category, 0) + 2
+    elif action == "skip":
+        # User explicitly skipped - negative signal
+        profile["disliked_categories"][category] = profile["disliked_categories"].get(category, 0) + 1
+    
+    profile["total_interactions"] += 1
+    
+    # Keep history limited
+    if len(profile["activity_history"]) > 50:
+        profile["activity_history"] = profile["activity_history"][-50:]
+    
+    # Persist to MongoDB if available
+    if users_col and user_id != "mock-user-id-12345":
+        try:
+            users_col.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {"preference_profile": profile}},
+                upsert=False
+            )
+        except Exception as e:
+            print(f"Failed to persist preferences: {e}")
+    
+    return profile
+
+
+def get_user_preferences(user_id):
+    """
+    Get the user's learned preferences.
+    
+    Returns:
+        {
+            "top_interests": ["museums", "food"],
+            "avoid": ["nightlife"],
+            "preference_strength": 0.7  # 0-1, how confident we are
+        }
+    """
+    if not user_id or user_id not in user_preference_store:
+        # Try to load from MongoDB
+        if users_col and user_id and user_id != "mock-user-id-12345":
+            try:
+                user = users_col.find_one({"_id": ObjectId(user_id)})
+                if user and "preference_profile" in user:
+                    user_preference_store[user_id] = user["preference_profile"]
+            except:
+                pass
+    
+    if user_id not in user_preference_store:
+        return {
+            "top_interests": [],
+            "avoid": [],
+            "preference_strength": 0
+        }
+    
+    profile = user_preference_store[user_id]
+    
+    # Calculate top interests
+    liked = profile.get("liked_categories", {})
+    disliked = profile.get("disliked_categories", {})
+    
+    # Sort by count
+    top_interests = sorted(liked.items(), key=lambda x: x[1], reverse=True)[:5]
+    avoid = sorted(disliked.items(), key=lambda x: x[1], reverse=True)[:3]
+    
+    # Confidence based on number of interactions
+    interactions = profile.get("total_interactions", 0)
+    confidence = min(1.0, interactions / 20)  # Max confidence at 20 interactions
+    
+    return {
+        "top_interests": [cat for cat, _ in top_interests],
+        "avoid": [cat for cat, _ in avoid],
+        "preference_strength": round(confidence, 2)
+    }
+
+
+def generate_personalized_recommendations(user_id, current_itinerary, available_activities):
+    """
+    Generate personalized recommendations based on user's learned preferences.
+    
+    Returns:
+        {
+            "recommendations": [activity1, activity2, ...],
+            "reason": "Based on your interest in museums..."
+        }
+    """
+    prefs = get_user_preferences(user_id)
+    
+    if prefs["preference_strength"] < 0.3:
+        # Not enough data, return generic message
+        return {
+            "recommendations": available_activities[:3],
+            "reason": "Here are some popular activities to get started!"
+        }
+    
+    if MOCK:
+        return {
+            "recommendations": available_activities[:3],
+            "reason": f"Based on your interest in {', '.join(prefs['top_interests'][:2]) or 'exploring'}, we think you'll love these!"
+        }
+    
+    # Use LLM to match preferences to activities
+    top_interests = prefs["top_interests"]
+    avoid = prefs["avoid"]
+    current_names = [item.get("name") for item in current_itinerary]
+    
+    available_list = [
+        f"- {a.get('name')} ({a.get('category', 'general')})"
+        for a in available_activities
+        if a.get("name") not in current_names
+    ][:15]
+    
+    prompt = f"""Based on user preferences, rank these activities:
+
+User likes: {', '.join(top_interests) or 'variety'}
+User avoids: {', '.join(avoid) or 'nothing specific'}
+Already in itinerary: {', '.join(current_names) or 'nothing yet'}
+
+Available activities:
+{chr(10).join(available_list)}
+
+Select the TOP 3 most relevant activities for this user.
+Explain briefly why these match their preferences.
+
+Return as JSON:
+{{
+    "recommendations": ["Activity Name 1", "Activity Name 2", "Activity Name 3"],
+    "reason": "Brief explanation of why these match your interests"
+}}
+Return ONLY the JSON."""
+
+    messages = [
+        {"role": "system", "content": "You are a personalization engine. Match activities to user preferences."},
+        {"role": "user", "content": prompt}
+    ]
+    
+    try:
+        response = call_llm_with_fallback("gpt-4o-mini", messages, temperature=0.5)
+        response_text = response.choices[0].message.content.strip()
+        
+        if response_text.startswith("```"):
+            response_text = response_text.split("```")[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+        
+        result = json.loads(response_text)
+        
+        # Map names back to full activity objects
+        name_to_activity = {a.get("name"): a for a in available_activities}
+        result["recommendations"] = [
+            name_to_activity.get(name, {"name": name})
+            for name in result.get("recommendations", [])
+            if name in name_to_activity
+        ]
+        
+        return result
+    
+    except Exception as e:
+        print(f"Recommendation error: {e}")
+        return {
+            "recommendations": available_activities[:3],
+            "reason": "Here are some activities you might enjoy!"
+        }
+
+
+# ============== FEATURE 5: AI ALTERNATIVE SUGGESTIONS ==============
+
+def suggest_alternatives(activity, all_activities, count=3):
+    """
+    Suggest alternative activities similar to a given one.
+    
+    Args:
+        activity: The activity to find alternatives for
+        all_activities: List of all available activities
+        count: Number of alternatives to suggest
+    
+    Returns:
+        {
+            "alternatives": [activity1, activity2, activity3],
+            "similarity_reasons": ["Both are art museums", "Same neighborhood", ...]
+        }
+    """
+    activity_name = activity.get("name", "")
+    
+    # Check cache
+    cache_key = hashlib.md5(f"alternatives_{activity_name}".encode()).hexdigest()
+    cached = ai_alternatives_cache.get(cache_key)
+    if cached:
+        return cached
+    
+    # Filter out the activity itself
+    candidates = [a for a in all_activities if a.get("name") != activity_name]
+    
+    if not candidates:
+        return {"alternatives": [], "similarity_reasons": []}
+    
+    if MOCK:
+        result = {
+            "alternatives": candidates[:count],
+            "similarity_reasons": [f"Similar to {activity_name}" for _ in candidates[:count]]
+        }
+        ai_alternatives_cache.set(cache_key, result, AI_ALTERNATIVES_TTL)
+        return result
+    
+    # Use LLM to find best alternatives
+    target = f"{activity_name} ({activity.get('category', 'general')})"
+    candidates_text = "\n".join([
+        f"- {a.get('name')} ({a.get('category', 'general')})"
+        for a in candidates[:20]
+    ])
+    
+    prompt = f"""Find the {count} most similar alternatives to this activity:
+
+Target: {target}
+
+Available alternatives:
+{candidates_text}
+
+Find activities that are similar in:
+- Category/type
+- Experience offered
+- Audience appeal
+
+Return as JSON:
+{{
+    "alternatives": ["Name 1", "Name 2", "Name 3"],
+    "similarity_reasons": ["Why similar 1", "Why similar 2", "Why similar 3"]
+}}
+Return ONLY the JSON."""
+
+    messages = [
+        {"role": "system", "content": "You find similar activities based on type and experience."},
+        {"role": "user", "content": prompt}
+    ]
+    
+    try:
+        response = call_llm_with_fallback("gpt-4o-mini", messages, temperature=0.3)
+        response_text = response.choices[0].message.content.strip()
+        
+        if response_text.startswith("```"):
+            response_text = response_text.split("```")[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+        
+        llm_result = json.loads(response_text)
+        
+        # Map names to full activity objects
+        name_to_activity = {a.get("name"): a for a in candidates}
+        alternatives = [
+            name_to_activity[name]
+            for name in llm_result.get("alternatives", [])
+            if name in name_to_activity
+        ]
+        
+        result = {
+            "alternatives": alternatives[:count],
+            "similarity_reasons": llm_result.get("similarity_reasons", [])[:count]
+        }
+        
+        ai_alternatives_cache.set(cache_key, result, AI_ALTERNATIVES_TTL)
+        return result
+    
+    except Exception as e:
+        print(f"Alternatives error: {e}")
+        # Fallback: return activities of same category
+        same_category = [a for a in candidates if a.get("category") == activity.get("category")]
+        result = {
+            "alternatives": (same_category or candidates)[:count],
+            "similarity_reasons": ["Similar category"] * count
+        }
+        return result
+
+
+# ============== FEATURE 6: REAL-TIME REPLANNING ==============
+
+def suggest_replan_optimization(itinerary, starting_coords, travel_mode, context=None):
+    """
+    Analyze current itinerary and suggest optimizations.
+    Called when user reorders or modifies their itinerary.
+    
+    Args:
+        itinerary: Current ordered list of activities
+        starting_coords: {lat, lng} of starting point
+        travel_mode: "driving-car", "foot-walking", or "cycling-regular"
+        context: Optional dict with {weather, time_constraints}
+    
+    Returns:
+        {
+            "suggestions": [
+                {"type": "reorder", "message": "Moving X before Y would save 15 min", "savings_min": 15},
+                {"type": "weather", "message": "Rain expected at 3pm - consider indoor activities then"},
+                {"type": "timing", "message": "The museum closes at 5pm - visit earlier"}
+            ],
+            "optimized_order": [indices] or None,
+            "total_savings_min": 15
+        }
+    """
+    if not itinerary or len(itinerary) < 2:
+        return {"suggestions": [], "optimized_order": None, "total_savings_min": 0}
+    
+    if MOCK:
+        return {
+            "suggestions": [
+                {
+                    "type": "tip",
+                    "message": "Great itinerary! The activities flow well together.",
+                    "savings_min": 0
+                }
+            ],
+            "optimized_order": None,
+            "total_savings_min": 0
+        }
+    
+    # Build context for LLM
+    itinerary_text = []
+    for i, item in enumerate(itinerary):
+        itinerary_text.append(
+            f"{i+1}. {item.get('name')} - {item.get('travel_time_min', '?')}min travel, "
+            f"Category: {item.get('category', 'general')}, "
+            f"Outdoor: {item.get('is_outdoor', False)}"
+        )
+    
+    weather_context = ""
+    if context and context.get("weather"):
+        w = context["weather"]
+        weather_context = f"\nWeather: {w.get('summary', 'unknown')}, {w.get('temp_f', '?')}°F, "
+        weather_context += f"Rain probability: {w.get('max_precip_probability', 0)}%"
+    
+    time_context = ""
+    if context and context.get("current_time"):
+        time_context = f"\nCurrent time: {context['current_time']}"
+    
+    prompt = f"""Analyze this trip itinerary and suggest optimizations:
+
+Starting point coordinates: {starting_coords}
+Travel mode: {travel_mode}
+
+Current itinerary:
+{chr(10).join(itinerary_text)}
+{weather_context}
+{time_context}
+
+Analyze for:
+1. Route efficiency - could reordering reduce total travel time?
+2. Weather considerations - are outdoor activities scheduled during good weather?
+3. Timing issues - any activities that might have time constraints?
+4. Flow - do activities make sense in this order?
+
+Provide actionable suggestions. If no improvements needed, say so.
+
+Return as JSON:
+{{
+    "suggestions": [
+        {{"type": "reorder|weather|timing|tip", "message": "...", "savings_min": 0}}
+    ],
+    "optimized_order": [0, 2, 1, 3] or null if no reorder needed,
+    "total_savings_min": 0
+}}
+Return ONLY the JSON."""
+
+    messages = [
+        {"role": "system", "content": "You are a trip optimization expert. Give practical, specific advice."},
+        {"role": "user", "content": prompt}
+    ]
+    
+    try:
+        response = call_llm_with_fallback("gpt-4o-mini", messages, temperature=0.4)
+        response_text = response.choices[0].message.content.strip()
+        
+        if response_text.startswith("```"):
+            response_text = response_text.split("```")[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+        
+        result = json.loads(response_text)
+        return result
+    
+    except Exception as e:
+        print(f"Replan error: {e}")
+        return {
+            "suggestions": [{"type": "tip", "message": "Your itinerary looks good!", "savings_min": 0}],
+            "optimized_order": None,
+            "total_savings_min": 0
+        }

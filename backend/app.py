@@ -9,7 +9,11 @@ from services import (
     plan_trip, plan_trip_smart, calculate_route,
     geocoding_cache, weather_cache, places_cache, llm_scoring_cache, routing_cache,
     register_user, login_user, logout_user, get_user_by_session_token,
-    save_itinerary_service, get_trips
+    save_itinerary_service, get_trips, MOCK,
+    # AI Enhancement Features
+    chat_with_assistant, summarize_activity, summarize_activities_batch,
+    generate_route_narration, update_user_preferences, get_user_preferences,
+    generate_personalized_recommendations, suggest_alternatives, suggest_replan_optimization
 )
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
@@ -20,6 +24,20 @@ app = Flask(__name__, static_folder="../static", static_url_path="/static")
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
+        # In MOCK mode, allow a mock user for testing
+        if MOCK:
+            auth_header = request.headers.get('Authorization', '')
+            if auth_header.lower().startswith("bearer mock") or auth_header.lower().startswith("bearer test"):
+                # Create a mock user for testing
+                g.current_user = {
+                    "_id": "mock-user-id-12345",
+                    "First_Name": "Test",
+                    "Last_Name": "User",
+                    "Email": "test@example.com",
+                    "session_expires": datetime.utcnow() + timedelta(hours=24)
+                }
+                return f(*args, **kwargs)
+        
         auth_header = request.headers.get('Authorization', '')
         if not auth_header.lower().startswith("bearer "):
             return jsonify({"error": "Authorization header missing or invalid"}), 401
@@ -61,6 +79,19 @@ def login_page():
 @app.route("/register")
 def register_page():
     return send_from_directory("../static", "register.html")
+
+@app.route("/api/config", methods=["GET"])
+def api_config():
+    """
+    Return configuration required for frontend.
+    Includes mock_mode flag so frontend can adapt its behavior.
+    """
+    return jsonify({
+        "geoapify_key": os.getenv("GEOAPIFY_API_KEY"),
+        "mock_mode": MOCK,
+        "has_llm": bool(os.getenv("OPENAI_API_KEY") or os.getenv("GEMINI_API_KEY")),
+        "has_mongodb": bool(os.getenv("MONGO_URI")) and not MOCK
+    })
 
 @app.route("/api/plan", methods=["POST"])
 def api_plan():
@@ -165,10 +196,10 @@ def api_plan_smart():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/calculate-route", methods=["POST"])
-@login_required
 def api_calculate_route():
     """
     Calculate routing for a sequence of activities in an itinerary.
+    Note: Does not require login - routing is a core feature for all users.
     Expects JSON body with:
     - waypoints: array of {lat, lng} objects
     - travel_mode: string (driving-car, cycling-regular, foot-walking)
@@ -320,6 +351,231 @@ def api_get_trips():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+# ============== AI ENHANCEMENT API ENDPOINTS ==============
+
+@app.route("/api/ai/chat", methods=["POST"])
+def api_ai_chat():
+    """
+    Conversational AI assistant for trip planning.
+    Maintains context across the conversation.
+    
+    Expects JSON:
+    - message: The user's message
+    - history: Array of previous messages [{role, content}]
+    - context: Optional {location, interests, budget, current_itinerary}
+    """
+    data = request.get_json()
+    if not data or "message" not in data:
+        return jsonify({"error": "Missing message"}), 400
+    
+    try:
+        result = chat_with_assistant(
+            conversation_history=data.get("history", []),
+            user_message=data["message"],
+            context=data.get("context")
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ai/summarize", methods=["POST"])
+def api_ai_summarize():
+    """
+    Generate engaging summaries for activities.
+    
+    Expects JSON:
+    - activity: Single activity object, OR
+    - activities: Array of activity objects (for batch)
+    - interests: Optional array of user interests for personalization
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Missing data"}), 400
+    
+    try:
+        interests = data.get("interests", [])
+        
+        if "activities" in data:
+            # Batch mode
+            summaries = summarize_activities_batch(data["activities"], interests)
+            return jsonify({"summaries": summaries})
+        elif "activity" in data:
+            # Single activity
+            summary = summarize_activity(data["activity"], interests)
+            return jsonify(summary)
+        else:
+            return jsonify({"error": "Provide 'activity' or 'activities'"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ai/narration", methods=["POST"])
+def api_ai_narration():
+    """
+    Generate route narration script for animated playback.
+    
+    Expects JSON:
+    - itinerary: Array of activity objects in order
+    - starting_location: Starting address string
+    - travel_mode: "driving-car", "foot-walking", or "cycling-regular"
+    """
+    data = request.get_json()
+    if not data or "itinerary" not in data:
+        return jsonify({"error": "Missing itinerary"}), 400
+    
+    try:
+        result = generate_route_narration(
+            itinerary=data["itinerary"],
+            starting_location=data.get("starting_location", "your starting point"),
+            travel_mode=data.get("travel_mode", "driving-car")
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ai/preferences", methods=["GET", "POST"])
+def api_ai_preferences():
+    """
+    GET: Retrieve user's learned preferences
+    POST: Update preferences based on user action
+    
+    POST expects JSON:
+    - action: "add", "remove", "complete", "skip"
+    - activity: The activity object
+    """
+    # Get user ID from auth header or use mock
+    user_id = None
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:]
+        if MOCK and (token.lower() == "mock" or token.lower() == "test"):
+            user_id = "mock-user-id-12345"
+        else:
+            user = get_user_by_session_token(token)
+            if user:
+                user_id = str(user["_id"])
+    
+    if not user_id:
+        # Allow anonymous preference tracking with session
+        user_id = request.headers.get("X-Session-ID", "anonymous")
+    
+    if request.method == "GET":
+        try:
+            prefs = get_user_preferences(user_id)
+            return jsonify(prefs)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    
+    else:  # POST
+        data = request.get_json()
+        if not data or "action" not in data or "activity" not in data:
+            return jsonify({"error": "Missing action or activity"}), 400
+        
+        try:
+            profile = update_user_preferences(
+                user_id=user_id,
+                action=data["action"],
+                activity=data["activity"]
+            )
+            return jsonify({"success": True, "profile_updated": profile is not None})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ai/recommendations", methods=["POST"])
+def api_ai_recommendations():
+    """
+    Get personalized activity recommendations based on learned preferences.
+    
+    Expects JSON:
+    - current_itinerary: Array of activities already in itinerary
+    - available_activities: Array of all available activities to choose from
+    """
+    data = request.get_json()
+    if not data or "available_activities" not in data:
+        return jsonify({"error": "Missing available_activities"}), 400
+    
+    # Get user ID
+    user_id = None
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:]
+        if MOCK and (token.lower() == "mock" or token.lower() == "test"):
+            user_id = "mock-user-id-12345"
+        else:
+            user = get_user_by_session_token(token)
+            if user:
+                user_id = str(user["_id"])
+    
+    if not user_id:
+        user_id = request.headers.get("X-Session-ID", "anonymous")
+    
+    try:
+        result = generate_personalized_recommendations(
+            user_id=user_id,
+            current_itinerary=data.get("current_itinerary", []),
+            available_activities=data["available_activities"]
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ai/alternatives", methods=["POST"])
+def api_ai_alternatives():
+    """
+    Get alternative activities similar to a given one.
+    
+    Expects JSON:
+    - activity: The activity to find alternatives for
+    - all_activities: Array of all available activities
+    - count: Optional number of alternatives (default 3)
+    """
+    data = request.get_json()
+    if not data or "activity" not in data or "all_activities" not in data:
+        return jsonify({"error": "Missing activity or all_activities"}), 400
+    
+    try:
+        result = suggest_alternatives(
+            activity=data["activity"],
+            all_activities=data["all_activities"],
+            count=data.get("count", 3)
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ai/optimize", methods=["POST"])
+def api_ai_optimize():
+    """
+    Get optimization suggestions for the current itinerary.
+    
+    Expects JSON:
+    - itinerary: Array of activities in current order
+    - starting_coords: {lat, lng} of starting point
+    - travel_mode: Travel mode string
+    - context: Optional {weather, current_time}
+    """
+    data = request.get_json()
+    if not data or "itinerary" not in data:
+        return jsonify({"error": "Missing itinerary"}), 400
+    
+    try:
+        result = suggest_replan_optimization(
+            itinerary=data["itinerary"],
+            starting_coords=data.get("starting_coords"),
+            travel_mode=data.get("travel_mode", "driving-car"),
+            context=data.get("context")
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 def cleanup_expired_cache():
     """Clean up expired entries from search results cache."""
     now = datetime.now()
@@ -337,5 +593,8 @@ if __name__ == "__main__":
     # Start background cache cleanup
     threading.Timer(15 * 60, cleanup_expired_cache).start()
     
-    port = int(os.getenv("PORT", 5000))
+    # Default to port 5050 to avoid macOS AirPlay conflict on port 5000
+    port = int(os.getenv("PORT", 5050))
+    print(f"🚀 Starting server on http://127.0.0.1:{port}")
+    print(f"   Open http://127.0.0.1:{port}/explore to use the app")
     app.run(host="0.0.0.0", port=port, debug=True)

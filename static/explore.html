@@ -6,6 +6,8 @@
     <title>Explore - Geo Guide</title>
     <link rel="stylesheet" href="/static/styles.css">
     <link rel="stylesheet" href="/static/explore.css">
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 </head>
 <body>
     <!-- Header/Navigation -->
@@ -163,6 +165,13 @@
 
             <!-- Activity Cards Grid -->
             <section class="cards-section">
+                <div class="mobile-toggle-container">
+                    <button id="toggle-view-btn" class="toggle-view-btn">
+                        <span class="toggle-text">Show Map</span>
+                        <span class="toggle-icon">🗺️</span>
+                    </button>
+                </div>
+
                 <div id="loading" class="loading-message" style="display: none;">Loading activities...</div>
                 <div id="cards-container" class="cards-grid">
                     <!-- Cards will be dynamically inserted here -->
@@ -171,6 +180,57 @@
                     <button id="load-more-btn" class="load-more-btn" style="display: none;">Load More Activities</button>
                 </div>
             </section>
+
+            <!-- Map Container -->
+            <section class="map-section" id="map-section">
+                <div id="map"></div>
+                <!-- Map Legend Overlay -->
+                <div class="map-legend">
+                    <div class="legend-item">
+                        <span class="legend-dot start"></span> Start
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-dot candidate"></span> Found
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-dot selected"></span> Itinerary
+                    </div>
+                </div>
+            </section>
+        </div>
+        
+        <!-- AI Chat Assistant Panel -->
+        <div class="ai-chat-container" id="ai-chat-container">
+            <button class="ai-chat-toggle" id="ai-chat-toggle" title="AI Trip Assistant">
+                <span class="chat-icon">🤖</span>
+                <span class="chat-label">AI Assistant</span>
+            </button>
+            
+            <div class="ai-chat-panel" id="ai-chat-panel">
+                <div class="chat-header">
+                    <span class="chat-title">✨ Trip Assistant</span>
+                    <button class="chat-close" id="chat-close">&times;</button>
+                </div>
+                
+                <div class="chat-messages" id="chat-messages">
+                    <div class="chat-message assistant">
+                        <div class="message-content">
+                            Hi! I'm your AI trip planning assistant. Ask me anything about your trip - I can suggest hidden gems, help reorder your itinerary, or answer questions about destinations!
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="chat-suggestions" id="chat-suggestions">
+                    <button class="suggestion-chip" data-message="Find hidden gems nearby">🔍 Hidden gems</button>
+                    <button class="suggestion-chip" data-message="Suggest budget-friendly options">💰 Budget tips</button>
+                    <button class="suggestion-chip" data-message="What's good for food?">🍽️ Food spots</button>
+                </div>
+                
+                <div class="chat-input-container">
+                    <input type="text" class="chat-input" id="chat-input" placeholder="Ask me anything about your trip...">
+                    <button class="chat-send" id="chat-send">➤</button>
+                </div>
+            </div>
         </div>
         
         <!-- Your Itinerary Section (Page Bottom) -->
